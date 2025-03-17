@@ -1,0 +1,735 @@
+######## Paquetes ###########
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#  install.packages("BiocManager")
+
+#BiocManager::install("adegenet")
+#install.packages("adegenet")
+#install.packages("pcadapt")
+library(usethis)
+library("devtools")
+#install_github("Andrew-Shirk/sGD")
+# library("sGD") # para obtener medidad de diversida segun coordenadas
+
+library(LEA) # para correr snmf
+library(vcfR)
+library(ade4)
+library(adegenet) # para dapc, find.cluster, estimar alelos compartidos  
+library(ggplot2)
+library(dplyr)
+library(dartR) # para
+
+library(terra)
+library(scatterpie) # para hacer mapas
+
+library(ggplot2)
+library(reshape2) # para generar graficos de la distribucion de daño
+
+library(gdsfmt)
+library(SNPRelate) # para analisis de identidad por estado
+
+library(fsthet) # estimar loci candidatos y separarlos de los neutrales
+library(pcadapt) # estimar loci candidatos y separarlos de los neutrales
+library(qvalue)
+
+library(bedr)
+
+#
+######## pasos previos #####
+set.seed(1234)
+# en esta seccion vamos a estmar la estructura genetica y haremos pruebas de parentesco
+# los analisis subsecuentes se realizaran con un set de datos que excluya a muestras problematicas
+# gametofitos y muestras blanco
+
+# filtramos las muestras 
+fd_GBS <- read.csv("df_GBS_metadata.csv")
+
+fd_GBS %>% count(Treatment)
+
+fd_GBS <- fd_GBS %>%
+  filter(!Treatment %in% c("blank", "gametophyte"))
+
+# ya no estan las categorias blank y gametophyte
+fd_GBS %>% count(Treatment) 
+
+# ahora creamos un txt que se usara en vcftools para tener el vcf para los analisis subsecuentes
+vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/todos_snps_limpios.recode.vcf")
+
+n_df_GBS <- fd_GBS[!fd_GBS$Sample_Name_Plate %in% colnames(vcfR_paisaje@gt),]
+n_df_GBS$Sample_Name_Plate # estos individuos se tienen que eliminar de la base de datos
+
+fd_GBS <- fd_GBS %>%
+  filter(!Sample_Name_Plate %in% c("PP2_NNAP1", "VD03_1516"))
+
+write.csv(fd_GBS, "df_GBS_metadata.csv", row.names = FALSE) # a F101r_N09P32 se le queta el cero y tenemos la base final
+
+
+n2_df_GBS <- colnames(vcfR_paisaje@gt)[!colnames(vcfR_paisaje@gt) %in% fd_GBS$Sample_Name_Plate]
+n2_df_GBS # estos individuos son los que se tienen que eliminar del vcf, "F101r_N9P32" no se elimina, editar txt
+write.table(n2_df_GBS, "ind_eliminar_vcf.txt", row.names = FALSE)
+
+# este paso elimina los individuos no deseados y genera el vcf con el que se haran analis de estructura genetica
+# correr en carpeta estructura_genetica 
+# vcftools --vcf /mnt/f/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/todos_snps_limpios.recode.vcf --removeind_eliminar_vcf.txt --recode --recode-INFO-all --out GBS_data
+
+#
+########## snmf ##########
+# Se requiere un archivo en formato genepop, asi que primero usaremos PGDSpider para convertir el vcf a ped para 
+# despues usar la funcion ped2geno, el archivo vcf de partida es muestras_paisaje.recode.vcf
+
+ped2geno("paisaje.ped")
+ped_data <- read.table("paisaje.ped", header = FALSE, sep = " ")
+geno <- read.geno("paisaje.geno") # esto lo hacemos para ver el orden de los individuos
+
+# corremos un snmf con pocas iteraciones
+snmf_estructura = snmf("paisaje.geno", 
+                       iterations=1000, K=1:10, rep=30, 
+                       entropy=T, CPU=4, ploidy=2, 
+                       project="new")
+plot(snmf_estructura,lwd=8,col="#9215D0",pch=1, cex=2)
+snmf_ind_estructura = load.snmfProject("paisaje.snmfProject")
+best=which.min(cross.entropy(snmf_ind_estructura, K=1))
+my.colors <- c("tomato", "lightblue",
+               "olivedrab", "gold")
+
+barchart(snmf_ind_estructura, K = 1, run = best,
+         border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuos",
+         ylab = "Proporciones ancestrales",
+         main = "Ancestria") -> bp
+axis(1, at = 1:length(bp$order),
+     labels = bp$order, las=1,
+     cex.axis = .4)
+
+########## colinearidad ########
+
+# cargamos los datos de las coordenadas y datos geneticos 
+coord <- read.csv("F:/fenotipo_ambiente/ambiente/Qgis (1)/ind_gbs_coord.csv")
+puntos <- st_as_sf(coord, coords = c("longitude", "latitude"), crs = 6369)
+print(puntos)
+
+IBD_dist <- geo_dist(puntos, type = "Euclidean")
+
+proj <- CRS("+init=epsg:6369")
+xy_points <- SpatialPoints(coord[, c(2, 3)], proj4string = proj)
+IBD_dist <- distmat(xy_points,method="ed")
+IBD_dist [1:10,1:10]
+
+vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/todas_muestras/muestras_paisaje.recode.vcf")
+
+paisaje_gen <- vcfR2genind(vcfR_paisaje)
+pop(paisaje_gen) <- coord$pop
+
+radius <- 500 # for this demo, units are in meters 6000
+IBD_GD <- sGD(paisaje_gen,
+              coord,
+              IBD_dist,
+              radius,
+              min_N=5,
+              metrics="GD")
+
+write.csv(IBD_GD, "IBD_GD_resultado.csv")
+
+# esta aproximacion es menos eficiente y una mas actual es la propuesta por Bishop: 
+# https://doi.org/10.1111/2041-210X.14090  
+# pero esta aproximacion se realizara en la parte de diversidad_genetica
+
+
+########## dapc categorias de saño #####
+# cargamos el vcf con los snps neutrales
+vcfR_daño <- gl.read.vcf("GBS_data.recode.vcf")
+
+# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
+meta_gbs <- read.csv("df_GBS_metadata.csv")
+meta_gbs %>% count(Treatment)
+f <- c("forest")
+bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
+forest <- gl.keep.ind(vcfR_daño, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+
+# asiganamos las categorias de daño a los individuos del bosque
+bosque_ind$ozone_damage_percentage[is.na(bosque_ind$ozone_damage_percentage)] <- "0%"
+bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
+bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
+bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
+
+bosque_ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+bosque_ind %>% count(reforested)
+
+nof <- "no"
+
+ind_filt <- bosque_ind[bosque_ind$reforested %in% nof, ]
+ind_filt %>% count(reforested)
+
+# volvemos a cortar el vcf 
+forest <- gl.keep.ind(vcfR_daño, ind_filt$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+pop(forest) <- ind_filt$ozone_damage_percentage # las categorias de daño son nuestra poblacion
+
+paj_daño<-xvalDapc(tab(forest,NA.method="mean"), pop(forest))
+plotdapc <- scatter(paj_daño$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
+                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
+
+
+posterior <- as.data.frame(paj_daño$DAPC$posterior)
+
+# optenemos la categoria de daño mas probable segun el dapc
+# aqui necesite ayuda de chatgpt
+posterior$pop_probable <- apply(posterior[,1:4], 1, function(x){
+  names(posterior)[which.min(abs(x-1))]
+} )
+
+# agregamos la categorizacion previa 
+posterior$pop_previo <- ind_filt$ozone_damage_percentage
+
+# agregamos edad para ver si el cambio de categoria se debe a la edad
+# la hipotesis seria que los pequeños aun no muestran signos notorios de daño
+posterior$edad <- ind_filt$tree_nodes
+
+
+# realizamos el dapc pero con las categorias de daño predichas por el dapc
+# en teoria estas tendrian que ser las poblaciones que realmente son 
+pop(forest) <- posterior$pop_probable # las categorias de daño predichas por el dapc
+
+pop_probable<-xvalDapc(tab(forest,NA.method="mean"), pop(forest))
+plotdapc <- scatter(pop_probable$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
+                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
+
+#
+########## find.cluster + dapc #######
+# corremos find.cluster, se escoje un numero maximo de clusters de 10 y 200 pca para empezar el analisis
+# el numero maximo de pcas no debe superar N/3 
+set.seed(123)
+grp <- find.clusters(forest, max.n.clust = 20, n.pca = 124, choose = FALSE, stat = "BIC", method = "kmeans")
+plot(grp$Kstat, type = "o", xlab = "numero de grupos (K)",
+     ylab = "BIC",
+     main = "find.clusters")
+
+grp$grp
+grp$size
+table(pop(vcf_paisaje), grp$grp)
+
+# corremos dapc con los grupos formados
+dapc1 <- dapc(forest, grp$grp)
+
+dapc1 <- dapc(forest, grp$grp, n.pca = 100, n.da = 4) 
+scatter(dapc1) # graficamos, los resultados indican que existen 4 grupos
+#
+
+########## mapa con la distrubucion de las categorias de daño ######
+# ahora vamos a generar un mapa con la distrubucion de las categorias de daño
+# scrip tomado de: https://github.com/AliciaMstt/monitoreo-oyameles/blob/main/scripts/3_figuras_propuesta.html
+
+meta <- read.csv("popmap_paisaje_dapc.csv")
+meta$sano <- ifelse(meta$ozono == "0%", 1, 0)
+meta$menos10 <- ifelse(meta$ozono == "10%", 1, 0)
+meta$d10_40 <- ifelse(meta$ozono == "10_40%", 1, 0)
+meta$d40_70 <- ifelse(meta$ozono == "40_70%", 1, 0)
+
+#cat <- c("sano", "menos10", "d10_40", "d40_70")
+
+ggplot() +
+  geom_scatterpie(data = meta, aes(x = p_log, y = p_lat), 
+                  cols = c("sano", "menos10", "d10_40", "d40_70")) +
+
+  scale_fill_manual(values = c("darkgreen", "gold2", "chocolate1", "red4"),
+                    name = "Categorias de daño") +
+  coord_fixed() +  # Mantiene la proporción correcta
+  labs(x = "Longitud", y = "Latitud") +
+  theme_minimal()
+
+#my_cols2<-c("gold2", "chocolate1", "orangered", "red4", "darkorchid4")
+#desired_order_percentage<-c("less than 10%", "10 to 40%", "40 to 50%", "50 to 70%", "more than 70%")
+
+imagen <- rast("paisaje.tif")
+#plotRGB(imagen, r=1, g=2, b=3, stretch="lin")
+#imagen_rgb <- as.raster(imagen)
+
+imagen_norm <- imagen / max(values(imagen), na.rm = TRUE) * 255
+
+# Convertir a data frame para ggplot2
+imagen_df <- as.data.frame(imagen_norm, xy = TRUE)
+
+
+# Renombrar bandas para facilidad de uso en ggplot
+colnames(imagen_df) <- c("lon", "lat", "red", "green", "blue")
+
+# plot sampled plots
+p_satmap <- ggplot() +
+  geom_raster(data = imagen_df, aes(x = lon, y = lat, fill = rgb(red, green, blue, maxColorValue = 255))) +
+  scale_fill_identity() +  # Usar colores tal cual en la imagen
+  geom_scatterpie(data = meta,
+                  aes(x = longitude, y = latitude, group = ozono),
+                  cols=cat,
+                  pie_scale = 2, color = NA, alpha = 1) +
+  ggtitle("a)") +
+  scale_fill_manual(values = c("darkgreen", "gold2", "chocolate1", "red4"),
+                    name = "Estado de salud") +
+  theme_minimal() +
+  theme(text = element_text(size = 20), legend.position = "none")
+
+print(p_satmap)
+
+#
+
+########## estructura genetica espacial a resolucion fina (FSSR) ########
+# vamos a evaluar la autocorrelacion espacial, usaremos el coeficiente de parentesco de
+# Loiselle para ello lo implementaremos en Spagedi (terminal). En esta seccion crearemos apartir de un vcf 
+# el archivo que necesita Spagedi 
+
+vcf_data <- vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/muestras_paisaje.recode.vcf")
+geno <- extract.gt(vcf_data) # Character matrix containing the genotypes
+geno <- t(geno)
+G <- matrix(geno, nrow = nrow(geno), ncol = ncol(geno))
+
+G[geno %in% c(NA)] <- "0"
+G[geno %in% c("0/0", "0|0")] <- "11/11"
+G[geno  %in% c("0/1", "0|1")] <- "11/22"
+G[geno  %in% c("1/0", "1|0")] <- "22/11"
+G[geno %in% c("1/1", "1|1")] <- "22/22"
+
+meta3 <- read.csv("popmap_paisaje_dapc.csv")
+
+colnames(G) <- vcf_data@fix[,3]
+Lat <- meta3$latitude
+Long <- meta3$longitude
+ind <- meta3$ID
+G <- cbind(ind,Lat,Long,G)
+
+write.csv(G, "relatness.csv")
+
+# corremos SpaGeDi 1.5
+# las opciones utilixadas fueron estimar los siguientes coeficientes de relacion:
+# kinship coefficient estimated according to J. Nason (described in Loiselle et al. 1995).
+# kinship coefficient estimated according to Ritland (1996).
+# relationship coefficient estimated according to Queller and Goodnight (1989).
+# relationship coefficient estimated according to Lynch and Ritland (1999)
+# relationship coefficient estimated according to Wang (2002)
+# relationship coefficient estimated according to Li et al. (1993).
+# fraternity coefficient, Lynch and Ritland (1999)
+# fraternity coefficient, Wang (2002)
+# distance measure described in Rousset (2000)(a by Rousset)
+
+# se realizaron 100 permutaciones y se optuvieron las matrices de distancia genetica
+
+# ahora vamos a crear hetmaps 
+
+Loiselle <- read.csv("kinship_Loiselle_1995.csv", row.names = 1)
+kiship<-as.matrix(Loiselle)
+gl.plot.heatmap(kiship)
+heatmap(kiship, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# agrupa a los de la placa 3, no sirve
+
+Ritlan <-  read.csv("k_Ritlan_1996.csv", row.names = 1)
+K_Ritlan <- as.matrix(Ritlan)
+gl.plot.heatmap(K_Ritlan)
+heatmap(K_Ritlan, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, todos iguales
+
+Moran <- read.csv("Moran_I_1999.csv", row.names = 1)
+r_M <- as.matrix(Moran)
+gl.plot.heatmap(r_M) 
+heatmap(r_M, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, todos iguales
+
+Queller <- read.csv("r_Queller_Goodnight_1989.csv", row.names = 1)
+r_QG <- as.matrix(Queller)
+gl.plot.heatmap(r_QG) # se ve interesante
+heatmap(r_QG, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, se ve interesante
+
+Lynch <- read.csv("r_Linch_Ritland_1999.csv", row.names = 1)
+r_LR <-  as.matrix(Lynch)
+gl.plot.heatmap(r_LR)
+heatmap(r_LR, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, todos iguales
+
+Wand <- read.csv("r_Wang_2002.csv", row.names = 1)
+r_W <- as.matrix(Wand)
+gl.plot.heatmap(r_W) # se ve interesante
+heatmap(r_W, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, interesante
+
+Li <- read.csv("r_Li_1993.csv", row.names = 1)
+r_L <- as.matrix(Li)
+gl.plot.heatmap(r_L)
+heatmap(r_L, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, todos iguales
+
+f_LR <- read.csv("f_LR_1999.csv", row.names = 1)
+fLR <- as.matrix(f_LR)
+gl.plot.heatmap(fLR)
+heatmap(fLR, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, todos iguales
+
+f_Wang <- read.csv("f_Wang_2002.csv", row.names = 1)
+f_W <- as.matrix(f_Wang)
+gl.plot.heatmap(f_W)
+heatmap(f_W, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, interesante
+# interesante
+
+a <- read.csv("a_Rousset_2000.csv", row.names = 1)
+a_R <- as.matrix(a)
+gl.plot.heatmap(a_R)
+heatmap(a_R, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# no agrupa a los de la placa 3, sive, iguales
+
+vcf_data <- vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/muestras_paisaje.recode.vcf")
+genidata <- vcfR2genind(vcf_data)
+sd <- propShared(genidata)
+gl.plot.heatmap(sd)
+heatmap(sd, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+# agrupa a los de la placa 3, no sirve
+
+
+f_w_2 <- read.csv("f_wang_2.csv", row.names = 1)
+fw2 <- as.matrix(f_w_2)
+gl.plot.heatmap(fw2)
+heatmap(fw2, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+
+
+r_w_2 <- read.csv("r_wang_2.csv", row.names = 1)
+rw2 <- as.matrix(r_w_2)
+gl.plot.heatmap(rw2)
+rw2_long <- melt(rw2)# Convertir a formato largo
+ggplot(rw2_long, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", limits = c(-0.5, 0.5)) +
+  theme_minimal()
+
+dgeo <- read.csv("distancia_geografica.csv", row.names = 1)
+distgeo <- as.matrix(dgeo)
+gl.plot.heatmap(distgeo)
+heatmap(distgeo, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+#
+
+########## separar loci candidatos de neutrales ####
+
+# cargamos el vcf y solo nos quedamos con los individuos del bosque y 
+# solo excluimos a los individuos repetidos
+vcfR_paisaje <- gl.read.vcf("GBS_data.recode.vcf")
+
+# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
+meta_gbs %>% count(Treatment)
+f <- c("forest")
+bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+bosque_ind %>% count(reforested)
+
+nof <- "no"
+
+bosque_ind <- bosque_ind[bosque_ind$reforested %in% nof, ]
+bosque_ind %>% count(reforested)
+
+# volvemos a cortar el vcf 
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# creamos un archivo genepop como lo quiere fsthet
+vcfR_paisaje <- read.vcfR("GBS_data.recode.vcf")
+geno <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
+geno <- t(geno)
+
+# como es el vcf general solo lo filtramos con los individuos del bosque
+geno <- geno[rownames(geno) %in% forest@ind.names, ] 
+
+G <- matrix(geno, nrow = nrow(geno), ncol = ncol(geno))
+
+# cambiamos el fomato segun el tutorial de fsthet
+G[geno %in% c("0/0")] <- "0101"
+G[geno  %in% c("0/1")] <- "0102"
+G[geno  %in% c("1/0")] <- "0201"
+G[geno %in% c("1/1")] <- "0202"
+
+# agregamos el nombre de los loci
+colnames(G) <- vcfR_paisaje@fix[,3]
+
+# agregamos el nombre de los individuos y el porcentaje de daño por ozono
+pop.info <- posterior$pop_probable
+ind.names <- bosque_ind$Sample_Name_Plate
+
+G <- cbind(pop.info, ind.names, G)
+
+# calculamos los Fst y Ht para los loci (Flanagan & Jones, (2017)
+fsts<-calc.actual.fst(G,"fst")
+head(fsts)
+
+par(mar=c(4,4,1,1))
+plot(fsts$Ht, fsts$Fst,xlab="Ht",ylab="Fst",pch=19)
+
+# estimamos los outlayers, creamos un grafico y los guardamos en txt
+quant.out<-fst.boot(G, bootstrap = T)
+outliers<-find.outliers(fsts,boot.out=quant.out)
+snps_outliers <- as.vector(outliers$Locus)
+write.table(snps_outliers, "outliers_pop_daño.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+head(outliers)
+out.dat<-fsthet(G)
+head(out.dat)
+
+# ahora estimaremos los outliers con pcadapt
+# convertimos a genind para despues extraer los snps en forma binaria 
+genind_paisaje <- gl2gi(forest)
+
+geno_matrix <- as.matrix(genind_paisaje@tab)
+View(geno_matrix) # el formato se asemeja binario de ped
+
+geno_matrix  <- t(geno_matrix)
+
+filename <- read.pcadapt(geno_matrix , type = "pcadapt")
+
+x <- pcadapt(filename, K=50)
+
+plot(x, option = "screeplot")
+plot(x, option = "scores")
+plot(x, option = "scores", i = 3, j = 4)
+
+# usaremos el metodo de q y fdr
+qval <- qvalue(x$pvalues)$qvalues
+alpha <- 0.1
+outpcadapt <- which(qval < alpha)
+outpcadapt # estas son las filas donde debe estar el outlier en geno_matrix
+
+outliers_v1 <- geno_matrix[outpcadapt,]
+rownames(outliers_v1)
+
+# esta es una segunda opcion para realizar el pcadapt
+G_pcadapt <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
+
+# como es el vcf general solo lo filtramos con los individuos del bosque
+G_pcadapt <- G_pcadapt[,colnames(G_pcadapt) %in% forest@ind.names] 
+
+# en estsion oun locus, por lo que cero y 2 son homocigos
+G_pcadapt[G_pcadapt %in% c("0/0")] <- "0"
+G_pcadapt[G_pcadapt  %in% c("1/0", "0/1")] <- "1"
+G_pcadapt[G_pcadapt %in% c("1/1")] <- "2"
+
+filename2 <- read.pcadapt(G_pcadapt , type = "pcadapt")
+
+x2 <- pcadapt(filename2, K=50)
+
+plot(x2, option = "screeplot")
+plot(x2, option = "scores")
+plot(x2, option = "scores", i = 3, j = 4)
+
+# usaremos el metodo de q y fdr
+qval2 <- qvalue(x2$pvalues)$qvalues
+alpha <- 0.1
+outpcadapt_v2 <- which(qval2 < alpha)
+outpcadapt_v2 # estas son las filas donde debe estar el outlier en geno_matrix
+
+outliers <- G_pcadapt[outpcadapt_v2, ]
+rownames(outliers) # este es el bueno 
+rownames(outliers_v1)
+
+pcadap_outlier <- rownames(outliers) 
+pcadap_outlier
+
+write.table(pcadap_outlier, "pcadap_outlier.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+
+# vamoa usar bayescan para teener un tercer respaldo de los snps atipicos
+# primero creamos un archivo apto para bayescan
+forest
+gl2bayescan(forest, outfile = "bayescan_forest.txt", outpath = ".")
+
+# en el manual de bayescan existe una funcion para graficar los resultados
+source("plot_R_bayescan.r")
+plot_bayescan("forests_gbs_fst.txt", FDR=0.1) # no hay atipicos, pero no nos rendiremos
+
+# apartir de una tabla ya construida, G, la usada para el analis de fsthet vamos a contruir una tabla segun 
+# el ejemplo de "test_genotype_SNP.txt" de bayescan, en el cual los individuos estan en las filas y se ordenan por 
+# poblacion
+
+# ordenamos la filas por categoria de daño
+Gbayes <- as.data.frame(G)
+Gbayes <- Gbayes %>% arrange(pop.info)
+
+# realizamos un conteo de los individuos por grupo
+conteog <- Gbayes %>%
+  group_by(pop.info) %>%            # Agrupar por la columna de categorías
+  mutate(conteo = row_number())  # Agregar un conteo de 1 a N dentro de cada categoría
+
+# agregamos el conteo al inicio 
+# despues eliminamos las colunas 4 con los nombres de los individuos
+group <- conteog$conteo
+Gbayes <- cbind("\t",group, Gbayes,"\t" )
+Gbayes <- Gbayes[ -c(4)]
+
+
+# cambiamos enotipos a codigo "binario"
+# dejar los NA solos no funciona, pero usar 9 como missing data si funciona
+Gbayes <- Gbayes %>%
+  mutate_all(~ as.character(.) %>%
+               replace(. %in% c("0101"), "0") %>%
+               replace(. %in% c(NA), "9") %>%
+               replace(. %in% c("0102", "0201"), "1") %>%
+               replace(. %in% c("0202"), "2"))
+
+ 
+#las poblaciones las pasamos a numeros
+Gbayes <- Gbayes %>%
+  mutate_all(~ as.character(.) %>%
+               replace(. %in% c("0%"), "1") %>%
+               replace(. %in% c("10%"), "2") %>%
+               replace(. %in% c("10_40%"), "3") %>%
+               replace(. %in% c("40_70%"), "4"))
+  
+
+# guardamos
+write.table(Gbayes, "Gbayes.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+source("plot_R_bayescan.r")
+plot_bayescan("Gbayes_fst.txt", FDR=0.1) # no hay atipicos, pero nos rendiremos
+
+
+# esta seria la lista final de outliers, solo tivimos outliers con
+# pcadapt y fsthet
+pcadap_outlier
+snps_outliers
+
+# Encontrar los elementos que están en ambas listas
+duplicados <- intersect(pcadap_outlier, snps_outliers)
+
+# Mostrar los duplicados, esto nos dice que las señales son correctas?
+print(duplicados)
+
+# Eliminar los duplicados de la lista `pcadap_outlier`
+pcadap_outlier <- setdiff(pcadap_outlier, duplicados)
+
+# Unir las dos listas sin duplicados
+outliers_combinados <- union(pcadap_outlier, snps_outliers)
+
+# los guardamos para despues eliminarnos del vcf GBS_data, para asi tener nuestro set de loci potencialmente neutrales
+write.table(outliers_combinados, "LOCI_ATIPICOS.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+# recuarda ejecutar vcftools en la carpeta de estructura_genetica 
+# vcftools --vcf GBS_data.recode.vcf --exclude LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_neutral
+# vcftools --vcf GBS_data.recode.vcf --snps LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_atipico
+
+# "outliers_pop_daño.txt"
+# "pcadap_outlier.txt"
+
+########## estructura sin outliers #####
+# muestras sin outliers
+vcf_sin <- gl.read.vcf("set_casi_neutral.recode.vcf")
+
+# volvemos a cortar el vcf 
+forest_nuetral <- gl.keep.ind(vcf_sin, ind_filt$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+pop(forest_nuetral) <- posterior$pop_probable # las categorias de daño son nuestra poblacion
+
+# cargamos los datos de las categorias de daño
+paj_sin<-xvalDapc(tab(forest_nuetral,NA.method="mean"), pop(forest_nuetral))
+plotdapc <- scatter(paj_sin$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
+                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
+
+
+# muestras solo outliers
+vcf_con <- gl.read.vcf("set_casi_atipico.recode.vcf")
+forest_atipico <- gl.keep.ind(vcf_con , ind_filt$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+pop(forest_atipico) <- posterior$pop_probable # las categorias de daño son nuestra poblacion
+paj_con<-xvalDapc(tab(forest_atipico ,NA.method="mean"), pop(forest_atipico))
+plotdapc <- scatter(paj_con$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
+                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
+#
+
+########## predecir con dapc #######
+# cargamos el vcf con los snps neutrales
+vcfR_paisaje <- gl.read.vcf("set_casi_atipico.recode.vcf")
+
+# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
+meta_gbs %>% count(Treatment)
+f <- "forest"
+bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+bosque_ind %>% count(reforested)
+
+nof <- "no"
+pp <- c("PP01_NNAP01", "PP03_NNAP01", "PP04_NNAP01", "PP05_NNAP01" )
+
+bosque_ind <- bosque_ind[bosque_ind$reforested %in% nof, ]
+pp <- 
+bosque_ind %>% count(reforested)
+
+# volvemos a cortar el vcf 
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+pop(forest) <- posterior$pop_probable # las categorias de daño predichas previamente
+
+paj<-xvalDapc(tab(forest,NA.method="mean"), pop(forest))
+plotdapc <- scatter(paj$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
+                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
+
+# creamos el archivo con los individuos a predecir 
+others_ind <- meta_gbs[!meta_gbs$Treatment %in% f, ]
+others <- gl.keep.ind(vcfR_paisaje, others_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# realizamos la prediccion
+pred.sup <- predict.dapc(paj$DAPC, newdata=others)
+
+round(pred.sup$posterior,3)
+
+
+col <- c("darkgreen","gold2", "chocolate1", "red4")
+col.points <- transp(col[as.integer(pop(forest))],.2)
+scatter(paj$DAPC, col=col, bg="white", scree.da=0, pch="",
+        cstar=0, clab=0, xlim=c(-5,15), legend=TRUE)
+par(xpd=TRUE)
+points(paj$DAPC$ind.coord[,1], paj$DAPC$ind.coord[,2], pch=20,
+       col=col.points, cex=5)
+col.sup <- col[as.integer(pop(others))]
+points(pred.sup$ind.scores[,1], pred.sup$ind.scores[,2], pch=15,
+       col=transp(col.sup,.7), cex=2)
+add.scatter.eig(paj$DAPC$eig,15,1,2, posi="bottomright", inset=.02)
+
+posterior_no_ferest<- as.data.frame(pred.sup$posterior)
+
+posterior_no_ferest$pop_probable <- apply(posterior_no_ferest[,1:4], 1, function(x){
+  names(posterior_no_ferest)[which.min(abs(x-1))]
+} )
+
+#
+
+
+########## identity by state #####
+
+snpgdsVCF2GDS("set_casi_neutral.recode.vcf", "test.gds", method="biallelic.only")
+snpgdsSummary("test.gds")
+genofile <-  snpgdsOpen("test.gds")
+
+sample.id <- read.gdsn(index.gdsn(genofile, "sample.id"))
+
+pop_code <- posterior$pop_probable
+table(pop_code)
+pop_code
+head(cbind(sample.id, pop_code))
+
+# se estima y grafica el promedio de identidades de ibs
+ibs <- snpgdsIBS(genofile, num.thread=2)
+pop.idx <- order(pop_code)
+image(ibs$ibs[pop.idx, pop.idx], col=terrain.colors(16), cex.axis = 1)
+gl.plot.heatmap(ibs$ibs)
+heatmap(ibs$ibs, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
+
+# para realizar un analisis de escalamiento multidimensional en la matris nxn del ibs
+loc <- cmdscale(1 - ibs$ibs, k = 2)
+x <- loc[,1]; y <- loc[,2]
+race <- as.factor(pop_code)
+plot(x,y,col=race,xlab="", ylab="",
+     main="Multidimensional scaling analysis (ibs)")
+legend("bottomright", legend=levels(race), pch="0",text.col=1:nlevels(race))
+
+# se realiza una agrupacion por ibs y se determina los grupos mediante permutacion
+ibs.hc <- snpgdsHCluster(snpgdsIBS(genofile))
+
+rv2 <- snpgdsCutTree(ibs.hc, samp.group = as.factor(pop_code))
+plot(rv2$dendrogram, leaflab="none", main = "heatmap", pch=2)
+legend("bottomleft", legend = levels(race), col=1:nlevels(race), pch=19, ncol=4)
+
+#

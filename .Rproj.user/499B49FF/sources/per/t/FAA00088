@@ -1,0 +1,26 @@
+{
+    "id": "FAA00088",
+    "path": "F:/Gih/semillas/bibliografia.R",
+    "project_path": "bibliografia.R",
+    "type": "r_source",
+    "hash": "201736754",
+    "contents": "",
+    "dirty": false,
+    "created": 1742054558014.0,
+    "source_on_save": false,
+    "relative_order": 1,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "207,12",
+        "scrollLine": "192"
+    },
+    "folds": "11|23|76|1|\n",
+    "lastKnownWriteTime": 1742187680,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1742187680738,
+    "read_only": false,
+    "read_only_alternatives": []
+}
