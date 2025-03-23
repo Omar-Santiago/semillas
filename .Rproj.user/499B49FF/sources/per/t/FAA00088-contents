@@ -15,8 +15,10 @@ tabla <-  rio::import("wca.txt") # busqueda saul
 tabla1 <- rio::import("regeneracion_501_1000.txt")
 tabla2 <- rio::import("regeneracion_1001_1500.txt")
 tabla3 <- rio::import("regeneracion_1501_1820.txt")
+tabla4 <- rio::import("regeneracion_1_500.txt")
 
-wos_tabla <- rbind(tabla1, tabla2, tabla3)
+
+wos_tabla <- rbind(tabla1, tabla2, tabla3, tabla4)
 
 write.table(wos_tabla, "wos_table.txt", row.names = FALSE, quote = FALSE, sep = "\t")
 
@@ -51,15 +53,15 @@ rep_wos <- wos_tabla %>%
 
 # vamos a filtrar por titulo y por el doi
 repetidos <- tabla[tabla$Title %in% wos_tabla$TI,]
-dim(repetidos) # 386 repetidos 
+dim(repetidos) # 599   repetidos 
 
 # vamos a filtrar por el doi
 repetidos_doi <- tabla[tabla$DOI %in% wos_tabla$DI,]
-dim(repetidos_doi) # 705 repetidos
+dim(repetidos_doi) # 1024 repetidos
 
 # existen filas sin doy, ahora veamos los titulos, esos no estan vacios
 doi_titulos <- repetidos_doi[repetidos_doi$Title %in% repetidos$Title,]
-dim(doi_titulos) # 375 titulos repetidos, usar el doi sobrestima los repetidos y no es util para comparar repetidos entre bases de datos
+dim(doi_titulos) # 579 titulos repetidos, usar el doi sobrestima los repetidos y no es util para comparar repetidos entre bases de datos
 
 write.table(repetidos, "repetidos.txt")
 #
@@ -160,10 +162,7 @@ hierarchical_clusters <- hclust(as.dist(distance_matrix))
 # agregar mas palabras, despues volver a visualizar el dendograma y finalmente cambiar el nombre de las palabras similares
 plot(hierarchical_clusters, labels = frec_11$`tabla_separado$Author_Keywords`)
 
-# Volver a juntar las palabras en una sola fila por cada grupo
-tabla_reunida <- tabla_separado %>%
-  group_by(V1) %>%  # Supongamos que tienes una columna ID que identifica cada grupo original
-  summarise(Author_Keywords = str_c(Author_Keywords, collapse = "; "))  # Juntar las palabras con un delimitador
+.
 
 # ahora vamos a ordenar tabla_ordenada por V1
 tabla_ordenada <- tabla_ordenada %>%

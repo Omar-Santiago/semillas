@@ -1,22 +1,14 @@
 ######## Paquetes ###########
-#if (!requireNamespace("BiocManager", quietly = TRUE))
-#  install.packages("BiocManager")
-
-#BiocManager::install("adegenet")
-#install.packages("adegenet")
-#install.packages("pcadapt")
 library(usethis)
 library("devtools")
-#install_github("Andrew-Shirk/sGD")
-# library("sGD") # para obtener medidad de diversida segun coordenadas
 
 library(LEA) # para correr snmf
-library(vcfR)
+library(vcfR) # para leer vcf
 library(ade4)
-library(adegenet) # para dapc, find.cluster, estimar alelos compartidos  
+library(adegenet) # para dapc, find.cluster
 library(ggplot2)
-library(dplyr)
-library(dartR) # para
+library(dplyr)# para manipulacion de dato
+library(dartR) # para manipulacion de datos
 
 library(terra)
 library(scatterpie) # para hacer mapas
@@ -24,14 +16,16 @@ library(scatterpie) # para hacer mapas
 library(ggplot2)
 library(reshape2) # para generar graficos de la distribucion de daño
 
-library(gdsfmt)
+library(gdsfmt) # paquete adjunto a SNPRelate
 library(SNPRelate) # para analisis de identidad por estado
 
 library(fsthet) # estimar loci candidatos y separarlos de los neutrales
 library(pcadapt) # estimar loci candidatos y separarlos de los neutrales
-library(qvalue)
+library(qvalue) # para realisar FDR
 
-library(bedr)
+library(pheatmap) # para generar mapas de calor
+
+library(poppr) # para hacer amova 
 
 #
 ######## pasos previos #####
@@ -72,7 +66,7 @@ write.table(n2_df_GBS, "ind_eliminar_vcf.txt", row.names = FALSE)
 # vcftools --vcf /mnt/f/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/todos_snps_limpios.recode.vcf --removeind_eliminar_vcf.txt --recode --recode-INFO-all --out GBS_data
 
 #
-########## snmf ##########
+########## snmf todos loci ##########
 # Se requiere un archivo en formato genepop, asi que primero usaremos PGDSpider para convertir el vcf a ped para 
 # despues usar la funcion ped2geno, el archivo vcf de partida es muestras_paisaje.recode.vcf
 
@@ -202,7 +196,7 @@ plotdapc <- scatter(pop_probable$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, 
 # corremos find.cluster, se escoje un numero maximo de clusters de 10 y 200 pca para empezar el analisis
 # el numero maximo de pcas no debe superar N/3 
 set.seed(123)
-grp <- find.clusters(forest, max.n.clust = 20, n.pca = 124, choose = FALSE, stat = "BIC", method = "kmeans")
+grp <- find.clusters(forest, max.n.clust = 20, n.pca = 100, choose = FALSE, stat = "BIC", method = "kmeans")
 plot(grp$Kstat, type = "o", xlab = "numero de grupos (K)",
      ylab = "BIC",
      main = "find.clusters")
@@ -211,10 +205,7 @@ grp$grp
 grp$size
 table(pop(vcf_paisaje), grp$grp)
 
-# corremos dapc con los grupos formados
-dapc1 <- dapc(forest, grp$grp)
-
-dapc1 <- dapc(forest, grp$grp, n.pca = 100, n.da = 4) 
+dapc1 <- dapc(forest, grp$grp, n.pca = 50, n.da = 4) 
 scatter(dapc1) # graficamos, los resultados indican que existen 4 grupos
 #
 
@@ -612,7 +603,7 @@ write.table(outliers_combinados, "LOCI_ATIPICOS.txt",  sep = "\t", row.names = F
 # "outliers_pop_daño.txt"
 # "pcadap_outlier.txt"
 
-########## estructura sin outliers #####
+########## estructura neutral #####
 # muestras sin outliers
 vcf_sin <- gl.read.vcf("set_casi_neutral.recode.vcf")
 
@@ -636,6 +627,52 @@ paj_con<-xvalDapc(tab(forest_atipico ,NA.method="mean"), pop(forest_atipico))
 plotdapc <- scatter(paj_con$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
                     cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
 #
+
+########## snmf neutral ####
+# creamos un archivo ped para el snmf
+# vcftools --vcf neutral_196ind.recode.vcf --plink --out neutral_196ind
+
+ped2geno("neutral_196ind.ped")
+ped_data <- read.table("neutral_196ind.ped", header = FALSE, sep = " ")
+geno <- read.geno("neutral_196ind.geno") # esto lo hacemos para ver el orden de los individuos
+
+# corremos un snmf con pocas iteraciones
+snmf_196 = snmf("neutral_196ind.geno", 
+                       iterations=1000, K=1:10, rep=30, 
+                       entropy=T, CPU=4, ploidy=2, 
+                       project="new")
+plot(snmf_196,lwd=8,col="#9215D0",pch=1, cex=2)
+snmf_ind_estructura = load.snmfProject("neutral_196ind.snmfProject")
+best=which.min(cross.entropy(snmf_ind_estructura, K=4))
+my.colors <- c("tomato", "lightblue",
+               "olivedrab", "gold")
+
+barchart(snmf_ind_estructura, K = 4, run = best,
+         border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuos",
+         ylab = "Proporciones ancestrales",
+         main = "Ancestria") -> bp
+axis(1, at = 1:length(bp$order),
+     labels = bp$order, las=1,
+     cex.axis = .4)
+#
+
+# corremos find.cluster, se escoje un numero maximo de clusters de 10 y 200 pca para empezar el analisis
+# el numero maximo de pcas no debe superar N/3 
+set.seed(123)
+findclust <- gl.read.vcf("neutral_196ind.recode.vcf")
+grp <- find.clusters(findclust, max.n.clust = 10, n.pca = 100, choose = FALSE, stat = "BIC", method = "kmeans")
+plot(grp$Kstat, type = "o", xlab = "numero de grupos (K)",
+     ylab = "BIC",
+     main = "find.clusters")
+
+grp$grp
+grp$size
+table(pop(findclust), grp$grp)
+
+dapc1 <- dapc(findclust, grp$grp, n.pca = 50, n.da = 4) 
+scatter(dapc1) # graficamos, los resultados indican que existen 4 grupos
 
 ########## predecir con dapc #######
 # cargamos el vcf con los snps neutrales
@@ -699,37 +736,221 @@ posterior_no_ferest$pop_probable <- apply(posterior_no_ferest[,1:4], 1, function
 
 ########## identity by state #####
 
-snpgdsVCF2GDS("set_casi_neutral.recode.vcf", "test.gds", method="biallelic.only")
+# usaremos los indivuos de forest y potentiel_mother para estimar la matriz de IBS
+meta_196ind <- read.csv("df_GBS_metadata.csv")
+
+meta_196ind %>% count(Treatment)
+fyp <- c("forest", "potential_mother")
+ibs_ind <- meta_gbs[meta_gbs$Treatment %in% fyp, ]
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+ibs_ind %>% count(reforested)
+nof <- "no"
+ibs_ind <- ibs_ind[ibs_ind$reforested %in% nof, ]
+
+# asiganamos las categorias de daño a los individuos del bosque
+ibs_ind$ozone_damage_percentage[is.na(ibs_ind$ozone_damage_percentage)] <- "0%"
+ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
+ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
+ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
+
+ibs_ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+
+
+
+# para mayor facilidad en analisis subsecuentes generaremos un vcf con las muestras que solo necesitare
+bosque <- as.data.frame(ibs_ind$Sample_Name_Plate)
+write.table(bosque, "ind_o_bosque.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+# vcftools --vcf set_casi_neutral.recode.vcf --keep ind_o_bosque.txt --recode --recode-INFO-all --out neutral_196ind
+
+snpgdsVCF2GDS("neutral_196ind.recode.vcf", "test.gds", method="biallelic.only")
 snpgdsSummary("test.gds")
 genofile <-  snpgdsOpen("test.gds")
 
 sample.id <- read.gdsn(index.gdsn(genofile, "sample.id"))
 
-pop_code <- posterior$pop_probable
-table(pop_code)
-pop_code
-head(cbind(sample.id, pop_code))
+# Realizamos la estimacion del parentesco con el metodo de KING
+kinshipGBS<- snpgdsIBDKING(genofile)
 
-# se estima y grafica el promedio de identidades de ibs
+# estraemos la matriz de consaguiniedad
+kin_matrixGBSAll  <- kinshipGBS$kinship
+
+# Asignar nombres a filas y columnas (importante para identificación)
+rownames(kin_matrixGBSAll) <- colnames(kin_matrixGBSAll) <- sample.id 
+
+# Definir colores para categorias de daño 
+colors_daño <- list(
+  daño = c(
+    "0%" = "darkgreen", 
+    "10%" = "gold2", 
+    "10_40%" = "chocolate1", 
+    "40_70%" = "red4"
+  )
+)
+
+colors_herarchy <- list(
+  edad = c(
+    "plantula" = "lightpink", 
+    "juvenil" = "#697329", 
+    "adulto" = "black"
+  )
+)
+
+# hacer un data frame para las anotaciones
+ano_king <- data.frame(ibs_ind[c(22)])
+rownames(ano_king) <- ibs_ind$Sample_Name_Plate
+colnames(ano_king) <-"daño"
+
+pheatmap(kin_matrixGBSAll, 
+         annotation_row = ano_king, 
+         annotation_col = ano_king, 
+         annotation_colors = colors_daño,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+# hacer un data frame para las anotaciones, estas anotaciones se obtuvieron de mas abajo
+ano_her<- data.frame(ibs_ind[c(42)])
+rownames(ano_her) <- ibs_ind$Sample_Name_Plate
+colnames(ano_her) <-"edad"
+
+pheatmap(kin_matrixGBSAll, 
+         annotation_row = ano_her, 
+         annotation_col = ano_her, 
+         annotation_colors = colors_herarchy,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+# realizamos la estimacion con un calculo de IBS similar a plink:
+# 
 ibs <- snpgdsIBS(genofile, num.thread=2)
-pop.idx <- order(pop_code)
-image(ibs$ibs[pop.idx, pop.idx], col=terrain.colors(16), cex.axis = 1)
-gl.plot.heatmap(ibs$ibs)
-heatmap(ibs$ibs, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
 
-# para realizar un analisis de escalamiento multidimensional en la matris nxn del ibs
-loc <- cmdscale(1 - ibs$ibs, k = 2)
-x <- loc[,1]; y <- loc[,2]
-race <- as.factor(pop_code)
-plot(x,y,col=race,xlab="", ylab="",
-     main="Multidimensional scaling analysis (ibs)")
-legend("bottomright", legend=levels(race), pch="0",text.col=1:nlevels(race))
+# extraemos matriz 
+ibs_matirx  <- ibs$ibs
 
-# se realiza una agrupacion por ibs y se determina los grupos mediante permutacion
-ibs.hc <- snpgdsHCluster(snpgdsIBS(genofile))
+# Asignar nombres a filas y columnas (importante para identificación)
+rownames(ibs_matirx) <- colnames(ibs_matirx) <- sample.id 
 
-rv2 <- snpgdsCutTree(ibs.hc, samp.group = as.factor(pop_code))
-plot(rv2$dendrogram, leaflab="none", main = "heatmap", pch=2)
-legend("bottomleft", legend = levels(race), col=1:nlevels(race), pch=19, ncol=4)
+# con la anotacion del daño
+pheatmap(ibs_matirx, 
+         annotation_row = ano_king, 
+         annotation_col = ano_king, 
+         annotation_colors = colors_daño,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
 
+
+# con la anotacion de las edades
+pheatmap(ibs_matirx, 
+         annotation_row = ano_her, 
+         annotation_col = ano_her, 
+         annotation_colors = colors_herarchy,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+#
+########## amova ########
+# creamos el set de datos que usaremos 
+# partiremos del siguiente set de datos
+View(ibs_ind)
+
+# cargamos el vcf y lo pasamos a genlight
+vcf_amova <- gl.read.vcf("neutral_196ind.recode.vcf")
+
+
+
+
+# vamos a usar las categorias originales 
+ibs_ind %>% count(tree_diameter_category)
+hierarchy1 <- ibs_ind[c(19)]
+colnames(hierarchy1)[colnames(hierarchy1) == "tree_diameter_category"] <- "Subpop"
+rownames(hierarchy1) <- vcf_amova@ind.names
+
+# especificamos los grupos en strata
+strata(vcf_amova) <- hierarchy1
+amova.result1 <- poppr.amova(vcf_amova, ~Subpop)
+amova.result1
+amova.test1 <- randtest(amova.result1)
+plot(amova.test1)
+
+
+# creamos una nueva columna y asignamos categorias
+# esto se basa en que las categorias sean homogeneas
+ibs_ind$hierarcgy_diameter <- ibs_ind$tree_diameter_category
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("0.5_cm", "1_cm")] <- "plantula"
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("2_cm", "6_cm","10_cm")] <- "juvenil"
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("30_cm", "40_cm")] <- "adulto"
+
+# editamos el data frame que especifica la jerarquia
+hierarchy <- ibs_ind[c(42)]
+colnames(hierarchy)[colnames(hierarchy) == "hierarcgy_diameter"] <- "Subpop"
+rownames(hierarchy) <- vcf_amova@ind.names
+
+# realizamos el amova
+strata(vcf_amova) <- hierarchy
+amova.result <- poppr.amova(vcf_amova, ~Subpop)
+amova.result
+amova.test <- randtest(amova.result)
+plot(amova.test)
+
+# ahora vamos a ver que sucede si tomamos los extremos
+ibs_ind$diameter_2 <- ibs_ind$tree_diameter_category
+ibs_ind$diameter_2[ibs_ind$diameter_2  %in% c("0.5_cm", "1_cm","2_cm", "6_cm")] <- "plantula"
+ibs_ind$diameter_2[ibs_ind$diameter_2  %in% c("10_cm", "30_cm", "40_cm")] <- "adulto"
+
+# editamos el data frame que especifica la jerarquia
+hierarchy2 <- ibs_ind[c(43)]
+colnames(hierarchy2)[colnames(hierarchy2) == "diameter_2"] <- "Subpop"
+rownames(hierarchy2) <- vcf_amova@ind.names
+
+# realizamos el amova
+strata(vcf_amova) <- hierarchy2
+amova.result <- poppr.amova(vcf_amova, ~Subpop)
+amova.result
+amova.test <- randtest(amova.result)
+plot(amova.test)
+
+
+# ahora agregamos la categorias de daño y las categorias de diametro
+hierarchy3 <- ibs_ind[c(22,19)]
+colnames(hierarchy3)[colnames(hierarchy3) == "ozone_damage_percentage"] <- "Pop"
+colnames(hierarchy3)[colnames(hierarchy3) == "tree_diameter_category"] <- "Subpop"
+rownames(hierarchy3) <- vcf_amova@ind.names
+
+# realizamos el amova con la categorias de daño y las categorias de diametro
+strata(vcf_amova) <- hierarchy3
+amova.result <- poppr.amova(vcf_amova, ~Pop/Subpop)
+amova.result
+amova.test <- randtest(amova.result)
+plot(amova.test)
+
+
+
+
+# ahora evaluamos solo las caegorias de daño
+hierarchy4 <- ibs_ind[c(22)]
+colnames(hierarchy4)[colnames(hierarchy4) == "ozone_damage_percentage"] <- "Subpop"
+rownames(hierarchy4) <- vcf_amova@ind.names
+
+# realizamos el amova solo con la categorias de daño
+strata(vcf_amova) <- hierarchy4
+amova.result <- poppr.amova(vcf_amova, ~Subpop)
+amova.result
+amova.test <- randtest(amova.result)
+plot(amova.test)
 #
