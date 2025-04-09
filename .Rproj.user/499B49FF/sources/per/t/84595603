@@ -3,7 +3,7 @@
     "path": "F:/Gih/Genomica_del_paisaje/pasos_en_R/estructura_genetica/estructura.R",
     "project_path": null,
     "type": "r_source",
-    "hash": "1296557076",
+    "hash": "2854757903",
     "contents": "",
     "dirty": false,
     "created": 1742063898571.0,
@@ -12,15 +12,15 @@
     "properties": {
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "224,2",
+        "cursorPosition": "781,0",
         "scrollLine": "0"
     },
-    "folds": "0|18|29|1|\n30|23|67|1|\n68|27|96|0|\n97|24|130|0|\n131|35|193|1|\n194|31|210|0|\n",
-    "lastKnownWriteTime": 1742439035,
+    "folds": "",
+    "lastKnownWriteTime": 1743983279,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1742680650101,
+    "last_content_update": 1744144372333,
     "read_only": false,
     "read_only_alternatives": []
 }

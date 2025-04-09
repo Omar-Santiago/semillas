@@ -15,8 +15,16 @@ library(ggrepel)
 library(ggmap)
 library(scatterpie)
 
+library("ggspatial")
+library("sf")
+library("tmap")
+library("rnaturalearth")
+library("rnaturalearthdata")
+
+rm(list = ls())
+
 #
-##### tituos repetidos ####
+######### tituos repetidos ####
 # cargamos la bases de datos de scopus 
 tabla <-  rio::import("wca_crudo.csv")
 
@@ -47,7 +55,7 @@ reps <- tabla %>%
   count(Link, sort = T) %>% 
   filter (n>1)
 
-######## threasure ######
+######### threasure ######
 
 # subimos las bases con las palabras que conformaran el teashuere
 # estas pañabras fueron obtenidad de una primer vista del sofware voswiev
@@ -115,7 +123,6 @@ tabla_separado$Author_Keywords[tabla_separado$Author_Keywords  %in% c("sustainab
 tabla_separado$Author_Keywords[tabla_separado$Author_Keywords  %in% c("sustainability")] <- "sustainable management"
 tabla_separado$Author_Keywords[tabla_separado$Author_Keywords  %in% c("logging")] <- "thinning"
 
-
 # separamos aquellos registros donde si esten las palabras clave del theasure
 art_si <-  tabla_separado[tabla_separado$Author_Keywords %in% theasure$remplazar,]
 
@@ -156,20 +163,22 @@ M2 <- M[M$TI %in% bd$Title,]
 results <- biblioAnalysis(M2, sep = ";")
 options(width=100)
 
+# esto nos genera diversos estadisticos, K = 30 especifica que solo se usen los 30
+# registros mas frecuentes
 S <- summary(object = results, k = 30, pause = FALSE)
 
 # ahora separamos la informacion de los paises
 country <- S[["MostProdCountries"]]
 
+# anotamos las key api para poder usar google maps desde r, esta se obtiene a partir
+# de la pagina de internet de google maps api
 register_google(key = "AIzaSyC9jNUC6YkEOZ4iQD76igWhS_wqOmnQblU")
-
 
 # Eliminar espacios en blanco antes y después de cada palabra
 country$Country <- str_trim(country$Country)
 
 # Creamos un vector con los paises
 paises <- country$Country
-
 paises
 
 # Función para obtener coordenadas
@@ -181,12 +190,13 @@ obtener_coordenadas <- function(pais) {
 }
 
 # Obtén las coordenadas para cada país
-coordenadas_paises <- do.call(rbind, lapply(paises, obtener_coordenadas_centro))
+coordenadas_paises <- do.call(rbind, lapply(paises, obtener_coordenadas))
 coor_paises <- cbind(country, coordenadas_paises)
 
 # base de datos para hacer el grafico
 coor_paises
 colnames(coor_paises)[colnames(coor_paises) == "lon"] <- "long"
+colnames(coor_paises)[colnames(coor_paises) == "Country"] <- "name"
 
 
 # Asegúrate de que las columnas 'SCP' y 'MCP' sean numéricas
@@ -194,18 +204,151 @@ coor_paises$SCP <- as.numeric(coor_paises$SCP)
 coor_paises$MCP <- as.numeric(coor_paises$MCP)
 coor_paises$Articles <- as.numeric(coor_paises$Articles)
 
-# Cambiar los valores en las celdas específicas
+# Cambiar los valores en las celdas específicas, esto porque tenian una mala codificacion
 coor_paises[9, 7] <- 52.8987  # Cambia el valor en la fila 2, columna 3
 coor_paises[9, 8] <- 18.7136  # Cambia el valor en la fila 4, columna 2
 
-# hacemos un grafico
+# la funcion ne_countries nos permite jalar la informacion de los paises y sus metadatos
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# corregir los nombres de los paises para que sean similares a world
+coor_paises$name[coor_paises$name == "USA"] <- "United States of America"
+coor_paises$name[coor_paises$name == "CANADA"] <- "Canada"
+coor_paises$name[coor_paises$name == "SPAIN"] <- "Spain"
+coor_paises$name[coor_paises$name == "BRAZIL"] <- "Brazil"
+coor_paises$name[coor_paises$name == "GERMANY"] <- "Germany"
+coor_paises$name[coor_paises$name == "CHINA"] <- "China"
+coor_paises$name[coor_paises$name == "ITALY"] <- "Italy"
+coor_paises$name[coor_paises$name == "SWEDEN"] <- "Sweden"
+coor_paises$name[coor_paises$name == "POLAND"] <- "Poland"
+coor_paises$name[coor_paises$name == "ARGENTINA"] <- "Argentina"
+coor_paises$name[coor_paises$name == "UNITED KINGDOM"] <- "United Kingdom"
+coor_paises$name[coor_paises$name == "MEXICO"] <- "Mexico"
+coor_paises$name[coor_paises$name == "AUSTRALIA"] <- "Australia"
+coor_paises$name[coor_paises$name == "CZECH REPUBLIC"] <- "Czech Republic"
+coor_paises$name[coor_paises$name == "FRANCE"] <- "France"
+coor_paises$name[coor_paises$name == "JAPAN"] <- "Japan"
+coor_paises$name[coor_paises$name == "BELGIUM"] <- "Belgium"
+coor_paises$name[coor_paises$name == "SWITZERLAND"] <- "Switzerland"
+coor_paises$name[coor_paises$name == "INDIA"] <- "India"
+coor_paises$name[coor_paises$name == "FINLAND"] <- "Finland"
+coor_paises$name[coor_paises$name == "AUSTRIA"] <- "Austria"
+coor_paises$name[coor_paises$name == "PORTUGAL"] <- "Portugal"
+coor_paises$name[coor_paises$name == "INDONESIA"] <- "Indonesia"
+coor_paises$name[coor_paises$name == "NETHERLANDS"] <- "Netherlands"
+coor_paises$name[coor_paises$name == "NEW ZEALAND"] <- "New Zealand"
+coor_paises$name[coor_paises$name == "ESTONIA"] <- "Estonia"
+coor_paises$name[coor_paises$name == "DENMARK"] <- "Denmark"
+coor_paises$name[coor_paises$name == "MALAYSIA"] <- "Malaysia"
+coor_paises$name[coor_paises$name == "THAILAND"] <- "Thailand"
+coor_paises$name[coor_paises$name == "BOLIVIA"] <- "Bolivia"
+
+# ahora realizamos un empate entre los paises del mapa mundi y los de nuestra base de datos
+world_data <- left_join(world, coor_paises, by = "name")
+
+# graficamos 
+# cambiar escala de color amarillo = menos
+ggplot(data = world_data) +
+  geom_sf(aes(fill = Articles)) + #agrega geometría de objetos
+  scale_fill_viridis_c(option = "viridis", trans = "sqrt", na.value = "white")+
+  #ggtitle("Mapa Mundial")+
+  #xlab("Longitud") + ylab("Latitud") +
+  labs(fill = "Articulos")+
+  theme_void()
+
+ggplot(data = world_data) +
+  geom_sf(aes(fill = MCP)) + #agrega geometría de objetos
+  scale_fill_viridis_c(option = "viridis", trans = "sqrt", na.value = "white")+
+  #ggtitle("Mapa Mundial")+
+  #xlab("Longitud") + ylab("Latitud") +
+  labs(fill = "Articulos")+
+  theme_void()
+
+
 world <- map_data('world')
 p <- ggplot(world, aes(long, lat)) +
   geom_map(map=world, aes(map_id=region), fill=NA, color="black") +
   coord_quickmap()
-p + geom_scatterpie(aes(x=long, y=lat, group=Country, r=Articles/10),
+p + geom_scatterpie(aes(x=long, y=lat, group=Country, r=Articles/5),
                     data=coor_paises, cols=c("SCP", "MCP"), color=NA, alpha=.8)+
-  geom_scatterpie_legend(coor_paises$Articles/10, x=-160, y=-55)
+  geom_scatterpie_legend(coor_paises$Articles/5, x=-160, y=-55)
 
 
+#
+######### dendograma temas ######
+# realizamos pruebas iniciales
+
+# para hacer el dendograma de los topicos usamos las palabras de los autores.
+# Este analisis usa K-means, asi que le especificamos que pueden existi hasta 10 
+# grupos (k.max) pero le decimos que escoja 6 grupos (clust) porque es el numero
+# de grupos que obtuvimos en vosview
+
+
+
+# en la siguiente configuracion se uso un corte de co-ocurrencias mayor a 10, 
+# por lo que se usaron 90 palabras. Los dos primeros componentes explica
+# 12.44% y 9.85%
+CS <- conceptualStructure(M2, field="DE", method="MCA", minDegree=10, clust= 6,
+                          k.max = 10, stemming=FALSE, labelsize=10, documents=30)
+
+
+# en la siguiente configuracion se uso un corte de co-ocurrencias mayor a 10. 
+# Los dos primeros componentes explican 12.44% y 9.85%. Pero ahora subiremos hasta 
+# 4 los clusters seleccionados, esto para tener una vision de los extremos y saber 
+# que grupos se mantienen y cuales no
+CS1 <- conceptualStructure(M2, field="DE", method="MCA", minDegree=10, clust= 4,
+                           k.max = 10, stemming=FALSE, labelsize=10, documents=10) 
+
+# ahora mantenemos los mismos parametros pero usamos 8 clusters
+CS2 <- conceptualStructure(M2, field="DE", method="MCA", minDegree=10, clust= 8,
+                           k.max = 10, stemming=FALSE, labelsize=10, documents=10)
+
+# ahora ya que realizamos las pruaba anteriones es necesario ver como se
+# desempeñan los otros metodos, en este caso el metodo de analisis de correspondencia 
+# se desempeña peor que el analisi de escalamiento metrico multidimencional (MCA) 
+# ya que los primeros componentes explican el 2.32% y 2.26%
+CS3 <- conceptualStructure(M2, field="DE", method="CA", minDegree=10, clust= 6,
+                           k.max = 10, stemming=FALSE, labelsize=10, documents=10)
+
+
+CS4 <- conceptualStructure(M2, field="DE", method="MDS", minDegree=10, clust= 6,
+                           k.max = 10, stemming=FALSE, labelsize=10, documents=10)
+#
+####### Acoplamiento bibliografico #####
+
+# caragamos la base de datos en formato bib
+file <- "base_bib_preliminar.bib"
+M <- convert2df(file = file, dbsource = "scopus", format = "bibtex")
+head(M$TI)
+
+file1 <- "base_preeliminar.csv"
+M2 <- convert2df(file = file1, dbsource = "scopus", format = "csv")
+head(M2$TI)
+
+# To see what the sep is
+M2$CR[1]
+
+# To obtain the most frequent cited manuscripts:
+CR <- citations(M2, field = "article", sep = ";")
+cbind(CR$Cited[1:10])
+
+# To obtain the most frequent cited first authors:
+CR <- citations(M2, field = "author", sep = ";")
+cbind(CR$Cited[1:10])
+
+~# 
+NetMatrix <- biblioNetwork(M2, analysis = "co-citation", network = "references")
+netstat <- networkStat(NetMatrix)
+
+net <- networkPlot(NetMatrix,  normalize = "salton", weighted=NULL, n = 100, 
+Title = "Authors' Coupling", type = "fruchterman", size=5, size.cex=T,
+remove.multiple=TRUE, labelsize=0.8, label.n=10, label.cex=F)
+
+
+data(scientometrics, package = "bibliometrix")
+M <- scientometrics
+M2 <- M
+NetMatrix <- biblioNetwork(M2, analysis = "coupling", network = "authors", sep = ";")
+
+#
 

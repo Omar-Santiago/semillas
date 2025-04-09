@@ -27,6 +27,9 @@ library(pheatmap) # para generar mapas de calor
 
 library(poppr) # para hacer amova 
 
+library(tcltk)
+library(Geneland)
+library(PBSmapping) # paquete en el tutorial de geneland
 #
 ######## pasos previos #####
 set.seed(1234)
@@ -54,98 +57,42 @@ n_df_GBS$Sample_Name_Plate # estos individuos se tienen que eliminar de la base 
 fd_GBS <- fd_GBS %>%
   filter(!Sample_Name_Plate %in% c("PP2_NNAP1", "VD03_1516"))
 
+fd_GBS <- fd_GBS %>%
+  filter(!Sample_Name_Plate %in% c("A115_N12P40", "A135_N08P46", "AE22_N04TAF",
+                                   "C3_N9P2",     "D1_N7P1",     "D127_N6P35",  "D65_N7P18",   "F123_N6P41",  "H3_N9P2",     "H53_N6P12"))
+
+# asiganamos las categorias de daño a los individuos del bosque
+fd_GBS$ozone_damage_percentage[is.na(fd_GBS$ozone_damage_percentage)] <- "0%"
+fd_GBS$ozone_damage_percentage[fd_GBS$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
+fd_GBS$ozone_damage_percentage[fd_GBS$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
+fd_GBS$ozone_damage_percentage[fd_GBS$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
+
+fd_GBS %>% count(ozone_damage_percentage) # las categorias a usar
+
 write.csv(fd_GBS, "df_GBS_metadata.csv", row.names = FALSE) # a F101r_N09P32 se le queta el cero y tenemos la base final
 
 
 n2_df_GBS <- colnames(vcfR_paisaje@gt)[!colnames(vcfR_paisaje@gt) %in% fd_GBS$Sample_Name_Plate]
 n2_df_GBS # estos individuos son los que se tienen que eliminar del vcf, "F101r_N9P32" no se elimina, editar txt
-write.table(n2_df_GBS, "ind_eliminar_vcf.txt", row.names = FALSE)
+write.table(n2_df_GBS, "ind_eliminar_vcf.txt", row.names = FALSE, col.names = F, quote = F)
 
 # este paso elimina los individuos no deseados y genera el vcf con el que se haran analis de estructura genetica
 # correr en carpeta estructura_genetica 
-# vcftools --vcf /mnt/f/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/todos_snps_limpios.recode.vcf --removeind_eliminar_vcf.txt --recode --recode-INFO-all --out GBS_data
+# vcftools --vcf /mnt/f/Gih/Genomica_del_paisaje/pasos_en_R/filtros_post_ensamble/todos_snps_limpios.recode.vcf --remove ind_eliminar_vcf.txt --recode --recode-INFO-all --out GBS_data
 
 #
-########## snmf todos loci ##########
-# Se requiere un archivo en formato genepop, asi que primero usaremos PGDSpider para convertir el vcf a ped para 
-# despues usar la funcion ped2geno, el archivo vcf de partida es muestras_paisaje.recode.vcf
-
-ped2geno("paisaje.ped")
-ped_data <- read.table("paisaje.ped", header = FALSE, sep = " ")
-geno <- read.geno("paisaje.geno") # esto lo hacemos para ver el orden de los individuos
-
-# corremos un snmf con pocas iteraciones
-snmf_estructura = snmf("paisaje.geno", 
-                       iterations=1000, K=1:10, rep=30, 
-                       entropy=T, CPU=4, ploidy=2, 
-                       project="new")
-plot(snmf_estructura,lwd=8,col="#9215D0",pch=1, cex=2)
-snmf_ind_estructura = load.snmfProject("paisaje.snmfProject")
-best=which.min(cross.entropy(snmf_ind_estructura, K=1))
-my.colors <- c("tomato", "lightblue",
-               "olivedrab", "gold")
-
-barchart(snmf_ind_estructura, K = 1, run = best,
-         border = NA, space = 0,
-         col = my.colors,
-         xlab = "Individuos",
-         ylab = "Proporciones ancestrales",
-         main = "Ancestria") -> bp
-axis(1, at = 1:length(bp$order),
-     labels = bp$order, las=1,
-     cex.axis = .4)
-
-########## colinearidad ########
-
-# cargamos los datos de las coordenadas y datos geneticos 
-coord <- read.csv("F:/fenotipo_ambiente/ambiente/Qgis (1)/ind_gbs_coord.csv")
-puntos <- st_as_sf(coord, coords = c("longitude", "latitude"), crs = 6369)
-print(puntos)
-
-IBD_dist <- geo_dist(puntos, type = "Euclidean")
-
-proj <- CRS("+init=epsg:6369")
-xy_points <- SpatialPoints(coord[, c(2, 3)], proj4string = proj)
-IBD_dist <- distmat(xy_points,method="ed")
-IBD_dist [1:10,1:10]
-
-vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/todas_muestras/muestras_paisaje.recode.vcf")
-
-paisaje_gen <- vcfR2genind(vcfR_paisaje)
-pop(paisaje_gen) <- coord$pop
-
-radius <- 500 # for this demo, units are in meters 6000
-IBD_GD <- sGD(paisaje_gen,
-              coord,
-              IBD_dist,
-              radius,
-              min_N=5,
-              metrics="GD")
-
-write.csv(IBD_GD, "IBD_GD_resultado.csv")
-
-# esta aproximacion es menos eficiente y una mas actual es la propuesta por Bishop: 
-# https://doi.org/10.1111/2041-210X.14090  
-# pero esta aproximacion se realizara en la parte de diversidad_genetica
-
-
-########## dapc categorias de saño #####
-# cargamos el vcf con los snps neutrales
+########## dapc categorias de daño #####
+# cargamos el vcf con todos los snps
 vcfR_daño <- gl.read.vcf("GBS_data.recode.vcf")
 
 # usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
 meta_gbs <- read.csv("df_GBS_metadata.csv")
 meta_gbs %>% count(Treatment)
-f <- c("forest")
+f <- c("forest", "potential_mother")
 bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
+
+# filtramos los individuos que nos interesan 
 forest <- gl.keep.ind(vcfR_daño, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-
-# asiganamos las categorias de daño a los individuos del bosque
-bosque_ind$ozone_damage_percentage[is.na(bosque_ind$ozone_damage_percentage)] <- "0%"
-bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
-bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
-bosque_ind$ozone_damage_percentage[bosque_ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
 
 bosque_ind %>% count(ozone_damage_percentage) # las categorias a usar
 
@@ -192,23 +139,221 @@ plotdapc <- scatter(pop_probable$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, 
                     cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
 
 #
-########## find.cluster + dapc #######
-# corremos find.cluster, se escoje un numero maximo de clusters de 10 y 200 pca para empezar el analisis
-# el numero maximo de pcas no debe superar N/3 
-set.seed(123)
-grp <- find.clusters(forest, max.n.clust = 20, n.pca = 100, choose = FALSE, stat = "BIC", method = "kmeans")
-plot(grp$Kstat, type = "o", xlab = "numero de grupos (K)",
-     ylab = "BIC",
-     main = "find.clusters")
 
-grp$grp
-grp$size
-table(pop(vcf_paisaje), grp$grp)
+########## separar loci candidatos de neutrales ####
 
-dapc1 <- dapc(forest, grp$grp, n.pca = 50, n.da = 4) 
-scatter(dapc1) # graficamos, los resultados indican que existen 4 grupos
+# cargamos el vcf y solo nos quedamos con los individuos del bosque y 
+# solo excluimos a los individuos repetidos
+vcfR_paisaje <- gl.read.vcf("GBS_data.recode.vcf")
+vcfR_paisaje
+
+# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
+meta_gbs %>% count(Treatment)
+f <- c("forest", "potential_mother")
+bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+bosque_ind %>% count(reforested)
+
+nof <- "no"
+
+bosque_ind <- bosque_ind[bosque_ind$reforested %in% nof, ]
+bosque_ind %>% count(reforested)
+
+# volvemos a cortar el vcf 
+forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# creamos un archivo genepop como lo quiere fsthet
+vcfR_paisaje <- read.vcfR("GBS_data.recode.vcf")
+geno <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
+geno <- t(geno)
+
+# como es el vcf general solo lo filtramos con los individuos del bosque
+geno <- geno[rownames(geno) %in% forest@ind.names, ] 
+
+G <- matrix(geno, nrow = nrow(geno), ncol = ncol(geno))
+
+# cambiamos el fomato segun el tutorial de fsthet
+G[geno %in% c("0/0")] <- "0101"
+G[geno  %in% c("0/1")] <- "0102"
+G[geno  %in% c("1/0")] <- "0201"
+G[geno %in% c("1/1")] <- "0202"
+
+# agregamos el nombre de los loci
+colnames(G) <- vcfR_paisaje@fix[,3]
+
+# agregamos el nombre de los individuos y el porcentaje de daño por ozono
+pop.info <- bosque_ind$ozone_damage_percentage
+ind.names <- bosque_ind$Sample_Name_Plate
+
+G <- cbind(pop.info, ind.names, G)
+
+# calculamos los Fst y Ht para los loci (Flanagan & Jones, (2017)
+fsts<-calc.actual.fst(G,"fst")
+head(fsts)
+
+par(mar=c(4,4,1,1))
+plot(fsts$Ht, fsts$Fst,xlab="Ht",ylab="Fst",pch=19)
+
+# estimamos los outlayers, creamos un grafico y los guardamos en txt
+quant.out<-fst.boot(G, bootstrap = T)
+outliers<-find.outliers(fsts,boot.out=quant.out)
+snps_outliers <- as.vector(outliers$Locus)
+write.table(snps_outliers, "outliers_pop_daño.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+head(outliers)
+out.dat<-fsthet(G)
+head(out.dat)
+
+# ahora estimaremos los outliers con pcadapt
+# convertimos a genind para despues extraer los snps en forma binaria 
+genind_paisaje <- gl2gi(forest)
+
+geno_matrix <- as.matrix(genind_paisaje@tab)
+View(geno_matrix) # el formato se asemeja binario de ped
+
+geno_matrix  <- t(geno_matrix)
+
+filename <- read.pcadapt(geno_matrix , type = "pcadapt")
+
+x <- pcadapt(filename, K=50)
+
+plot(x, option = "screeplot")
+
+poplist.int <- as.factor(bosque_ind$ozone_damage_percentage)
+print(poplist.int)
+
+plot(x, option = "scores", pop = poplist.int)
+plot(x, option = "scores", i = 3, j = 4, pop = poplist.int)
+
+# usaremos el metodo de q y fdr
+qval <- qvalue(x$pvalues)$qvalues
+alpha <- 0.1
+outpcadapt <- which(qval < alpha)
+outpcadapt # estas son las filas donde debe estar el outlier en geno_matrix
+
+plot(x, option = "manhattan")
+
+
+outliers_v1 <- geno_matrix[outpcadapt,]
+rownames(outliers_v1)
+
+# esta es una segunda opcion para realizar el pcadapt
+G_pcadapt <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
+
+# como es el vcf general solo lo filtramos con los individuos del bosque
+G_pcadapt <- G_pcadapt[,colnames(G_pcadapt) %in% forest@ind.names] 
+
+# en estsion oun locus, por lo que cero y 2 son homocigos
+G_pcadapt[G_pcadapt %in% c("0/0")] <- "0"
+G_pcadapt[G_pcadapt  %in% c("1/0", "0/1")] <- "1"
+G_pcadapt[G_pcadapt %in% c("1/1")] <- "2"
+
+filename2 <- read.pcadapt(G_pcadapt , type = "pcadapt")
+
+x2 <- pcadapt(filename2, K=50)
+
+plot(x2, option = "screeplot")
+plot(x2, option = "scores", pop = poplist.int)
+plot(x2, option = "scores", i = 3, j = 4, pop = poplist.int)
+
+# usaremos el metodo de q y fdr
+qval2 <- qvalue(x2$pvalues)$qvalues
+alpha <- 0.1
+outpcadapt_v2 <- which(qval2 < alpha)
+outpcadapt_v2 # estas son las filas donde debe estar el outlier en geno_matrix
+
+outliers <- G_pcadapt[outpcadapt_v2, ]
+rownames(outliers) # este es el bueno 
+rownames(outliers_v1)
+
+pcadap_outlier <- rownames(outliers) 
+pcadap_outlier
+
+write.table(pcadap_outlier, "pcadap_outlier.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+# vamoa usar bayescan para teener un tercer respaldo de los snps atipicos
+# primero creamos un archivo apto para bayescan
+forest
+gl2bayescan(forest, outfile = "bayescan_forest.txt", outpath = ".")
+
+# en el manual de bayescan existe una funcion para graficar los resultados
+source("plot_R_bayescan.r")
+plot_bayescan("forests_gbs_fst.txt", FDR=0.1) # no hay atipicos, pero no nos rendiremos
+
+# apartir de una tabla ya construida, G, la usada para el analis de fsthet vamos a contruir una tabla segun 
+# el ejemplo de "test_genotype_SNP.txt" de bayescan, en el cual los individuos estan en las filas y se ordenan por 
+# poblacion
+
+# ordenamos la filas por categoria de daño
+Gbayes <- as.data.frame(G)
+Gbayes <- Gbayes %>% arrange(pop.info)
+
+# realizamos un conteo de los individuos por grupo
+conteog <- Gbayes %>%
+  group_by(pop.info) %>%            # Agrupar por la columna de categorías
+  mutate(conteo = row_number())  # Agregar un conteo de 1 a N dentro de cada categoría
+
+# agregamos el conteo al inicio 
+# despues eliminamos las colunas 4 con los nombres de los individuos
+group <- conteog$conteo
+Gbayes <- cbind("\t",group, Gbayes,"\t" )
+Gbayes <- Gbayes[ -c(4)]
+
+
+# cambiamos enotipos a codigo "binario"
+# dejar los NA solos no funciona, pero usar 9 como missing data si funciona
+Gbayes <- Gbayes %>%
+  mutate_all(~ as.character(.) %>%
+               replace(. %in% c("0101"), "0") %>%
+               replace(. %in% c(NA), "9") %>%
+               replace(. %in% c("0102", "0201"), "1") %>%
+               replace(. %in% c("0202"), "2"))
+
+
+#las poblaciones las pasamos a numeros
+Gbayes <- Gbayes %>%
+  mutate_all(~ as.character(.) %>%
+               replace(. %in% c("0%"), "1") %>%
+               replace(. %in% c("10%"), "2") %>%
+               replace(. %in% c("10_40%"), "3") %>%
+               replace(. %in% c("40_70%"), "4"))
+
+
+# guardamos
+write.table(Gbayes, "Gbayes.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+source("plot_R_bayescan.r")
+plot_bayescan("./out_bayescan/output_fst.txt", FDR=0.1) # no hay atipicos, pero nos rendiremos
+
+
+# esta seria la lista final de outliers, solo tivimos outliers con
+# pcadapt y fsthet
+pcadap_outlier
+snps_outliers
+
+# Encontrar los elementos que están en ambas listas
+duplicados <- intersect(pcadap_outlier, snps_outliers)
+
+# Mostrar los duplicados, esto nos dice que las señales son correctas?
+print(duplicados)
+
+# Eliminar los duplicados de la lista `pcadap_outlier`
+pcadap_outlier <- setdiff(pcadap_outlier, duplicados)
+
+# Unir las dos listas sin duplicados
+outliers_combinados <- union(pcadap_outlier, snps_outliers)
+
+# los guardamos para despues eliminarnos del vcf GBS_data, para asi tener nuestro set de loci potencialmente neutrales
+write.table(outliers_combinados, "LOCI_ATIPICOS.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+# recuarda ejecutar vcftools en la carpeta de estructura_genetica 
+# vcftools --vcf GBS_data.recode.vcf --exclude LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_neutral
+# vcftools --vcf GBS_data.recode.vcf --snps LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_atipico
+
+# "outliers_pop_daño.txt"
+# "pcadap_outlier.txt"
 #
-
 ########## mapa con la distrubucion de las categorias de daño ######
 # ahora vamos a generar un mapa con la distrubucion de las categorias de daño
 # scrip tomado de: https://github.com/AliciaMstt/monitoreo-oyameles/blob/main/scripts/3_figuras_propuesta.html
@@ -264,6 +409,795 @@ p_satmap <- ggplot() +
 print(p_satmap)
 
 #
+
+########## identity by state #####
+
+# usaremos los indivuos de forest y potentiel_mother para estimar la matriz de IBS
+meta_196ind <- read.csv("df_GBS_metadata.csv")
+
+meta_196ind %>% count(Treatment)
+fyp <- c("forest", "potential_mother")
+ibs_ind <- meta_196ind[meta_196ind$Treatment %in% fyp, ]
+
+# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
+ibs_ind %>% count(reforested)
+nof <- "no"
+ibs_ind <- ibs_ind[ibs_ind$reforested %in% nof, ]
+
+ibs_ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+# creamos una nueva columna y asignamos categorias
+# esto se basa en que las categorias sean homogeneas
+ibs_ind$hierarcgy_diameter <- ibs_ind$tree_diameter_category
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("0.5_cm", "1_cm")] <- "plantula"
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("2_cm", "6_cm","10_cm")] <- "juvenil"
+ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("30_cm", "40_cm")] <- "adulto"
+
+
+# para mayor facilidad en analisis subsecuentes generaremos un vcf con las muestras que solo necesitare
+bosque <- as.data.frame(ibs_ind$Sample_Name_Plate)
+write.table(bosque, "ind_o_bosque.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+# vcftools --vcf set_casi_neutral.recode.vcf --keep ind_o_bosque.txt --recode --recode-INFO-all --out neutral_196ind
+# vcftools --vcf set_casi_atipico.recode.vcf --keep ind_o_bosque.txt --recode --recode-INFO-all --out atipico_196ind
+
+
+# convertimos el vcf a archivo gds
+snpgdsVCF2GDS("neutral_196ind.recode.vcf", "test.gds", method="biallelic.only")
+snpgdsSummary("test.gds")
+genofile <-  snpgdsOpen("test.gds")
+
+# obtenemos los nombres
+sample.id <- read.gdsn(index.gdsn(genofile, "sample.id"))
+
+# Realizamos la estimacion del parentesco con el metodo de KING
+kinshipGBS<- snpgdsIBDKING(genofile)
+
+# estraemos la matriz de consaguiniedad
+kin_matrixGBSAll  <- kinshipGBS$kinship
+
+# Asignar nombres a filas y columnas (importante para identificación)
+rownames(kin_matrixGBSAll) <- colnames(kin_matrixGBSAll) <- sample.id 
+
+# Definir colores para categorias de daño 
+colors_daño <- list(
+  daño = c(
+    "0%" = "darkgreen", 
+    "10%" = "gold2", 
+    "10_40%" = "chocolate1", 
+    "40_70%" = "red4"
+  )
+)
+
+colors_herarchy <- list(
+  edad = c(
+    "plantula" = "lightpink", 
+    "juvenil" = "#697329", 
+    "adulto" = "black"
+  )
+)
+
+# hacer un data frame para las anotaciones
+ano_king <- data.frame(ibs_ind[c(22)])
+rownames(ano_king) <- ibs_ind$Sample_Name_Plate
+colnames(ano_king) <-"daño"
+
+pheatmap(kin_matrixGBSAll, 
+         annotation_row = ano_king, 
+         annotation_col = ano_king, 
+         annotation_colors = colors_daño,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+# hacer un data frame para las anotaciones, estas anotaciones se obtuvieron de mas abajo
+ano_her<- data.frame(ibs_ind[c(42)])
+rownames(ano_her) <- ibs_ind$Sample_Name_Plate
+colnames(ano_her) <-"edad"
+
+pheatmap(kin_matrixGBSAll, 
+         annotation_row = ano_her, 
+         annotation_col = ano_her, 
+         annotation_colors = colors_herarchy,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+
+# realizamos la estimacion con un calculo de IBS similar a plink:
+# spoiler no nos dice nada
+ibs <- snpgdsIBS(genofile, num.thread=2)
+
+# extraemos matriz 
+ibs_matirx  <- ibs$ibs
+
+# Asignar nombres a filas y columnas (importante para identificación)
+rownames(ibs_matirx) <- colnames(ibs_matirx) <- sample.id 
+
+# con la anotacion del daño
+pheatmap(ibs_matirx, 
+         annotation_row = ano_king, 
+         annotation_col = ano_king, 
+         annotation_colors = colors_daño,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+
+# con la anotacion de las edades
+pheatmap(ibs_matirx, 
+         annotation_row = ano_her, 
+         annotation_col = ano_her, 
+         annotation_colors = colors_herarchy,
+         display_numbers = FALSE, 
+         color = colorRampPalette(c("blue", "white", "red"))(100),
+         main = "Matriz de Parentesco (IBD) All SNPs",
+         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
+         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
+)
+
+#
+########## snmf neutral ####
+# creamos un archivo ped para el snmf
+# vcftools --vcf neutral_196ind.recode.vcf --plink --out neutral_196ind
+
+ped2geno("neutral_196ind.ped")
+ped_data <- read.table("neutral_196ind.ped", header = FALSE, sep = "/t")
+geno <- read.geno("neutral_196ind.geno") # esto lo hacemos para ver el orden de los individuos
+
+# corremos un snmf con pocas iteraciones
+snmf_196 = snmf("neutral_196ind.geno", 
+                iterations=1000, K=1:10, rep=30, 
+                entropy=T, CPU=4, ploidy=2, 
+                project="new")
+plot(snmf_196,lwd=8,col="#9215D0",pch=1, cex=2)
+snmf_ind_estructura = load.snmfProject("neutral_196ind.snmfProject")
+best=which.min(cross.entropy(snmf_ind_estructura, K=2))
+my.colors <- c("tomato", "lightblue",
+               "olivedrab", "gold")
+
+barchart(snmf_ind_estructura, K = 2, run = best,
+         border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuos",
+         ylab = "Proporciones ancestrales",
+         main = "Ancestria") -> bp
+axis(1, at = 1:length(bp$order),
+     labels = bp$order, las=1,
+     cex.axis = .4)
+#
+########## amova ########
+# creamos el set de datos que usaremos 
+# partiremos del siguiente set de datos
+View(ibs_ind)
+
+# cargamos el vcf y lo pasamos a genlight
+vcf_amova <- gl.read.vcf("neutral_196ind.recode.vcf")
+vcf_amova <- gl2gi(vcf_amova)
+vcf_amova
+
+namesind <- rownames(vcf_amova$tab)
+
+# vamos a usar las categorias originales 
+ibs_ind %>% count(tree_diameter_category)
+hierarchy1 <- ibs_ind[c(19)]
+colnames(hierarchy1)[colnames(hierarchy1) == "tree_diameter_category"] <- "Subpop"
+rownames(hierarchy1) <- namesind
+
+# especificamos los grupos en strata
+strata(vcf_amova) <- hierarchy1 # diametro original
+amova.result1 <- poppr.amova(vcf_amova, ~Subpop,
+                             missing = "mean", 
+                             correction =  "quasieuclid",
+                             algorithm = "nearest_neighbor")
+amova.result1
+amova.test1 <- randtest(amova.result1)
+amova.test1
+plot(amova.test1) # no es significativo
+
+# ahora evaluamos solo las caegorias de daño
+hierarchy4 <- ibs_ind[c(22)]
+colnames(hierarchy4)[colnames(hierarchy4) == "ozone_damage_percentage"] <- "Subpop"
+rownames(hierarchy4) <- namesind
+
+# vemos los genotipos
+head(vcf_amova$tab, 10)
+
+# realizamos el amova solo con la categorias de daño
+strata(vcf_amova) <- hierarchy4
+
+#vemos la distribucion
+table(strata(vcf_amova, ~Subpop))
+
+amova.result <- poppr.amova(vcf_amova, ~Subpop, 
+                            missing = "mean", 
+                            correction ="quasieuclid",
+                            algorithm = "average_neighbor"
+                            )
+amova.result
+amova.test <- randtest(amova.result)
+amova.test
+plot(amova.test)
+
+
+
+# ahora agregamos la categorias de daño y las categorias de diametro
+hierarchy3 <- ibs_ind[c(22,19)]
+colnames(hierarchy3)[colnames(hierarchy3) == "ozone_damage_percentage"] <- "Pop"
+colnames(hierarchy3)[colnames(hierarchy3) == "tree_diameter_category"] <- "Subpop"
+rownames(hierarchy3) <- namesind
+
+# realizamos el amova con la categorias de daño y las categorias de diametro
+strata(vcf_amova) <- hierarchy3
+amova.result <- poppr.amova(vcf_amova, ~Pop/Subpop, 
+                            missing = "mean", 
+                            correction =  "quasieuclid",
+                            algorithm = "average_neighbor"
+)
+amova.result
+amova.test <- randtest(amova.result)
+amova.test
+plot(amova.test)
+
+
+# ahora realizamos la evaluacion entre asintomaticos y sintomaticos
+ibs_ind %>% count(ozone_damage_percentage) # las categorias a usar
+ibs_ind$sintoma <- ibs_ind$ozone_damage_percentage
+ibs_ind$sintoma[ibs_ind$sintoma  %in% c("0%")] <- "sano"
+ibs_ind$sintoma[ibs_ind$sintoma  %in% c("10%", "10_40%", "40_70%")] <- "daño"
+
+hierarchy_2cat <- ibs_ind[c(44)]
+colnames(hierarchy_2cat)[colnames(hierarchy_2cat) == "sintoma"] <- "Subpop"
+rownames(hierarchy_2cat) <- namesind
+
+# realizamos el amova solo con la categorias de daño
+strata(vcf_amova) <- hierarchy_2cat
+amova.result <- poppr.amova(vcf_amova, ~Subpop, 
+                            missing = "mean", 
+                            correction =  "quasieuclid",
+                            algorithm = "average_neighbor"
+)
+amova.result
+amova.test <- randtest(amova.result)
+amova.test
+plot(amova.test)
+
+#
+########## sPCA outlier ##########
+
+# Cargamos las coordenadas
+View(ibs_ind)
+
+# filtramos los ind con NA
+coords <- ibs_ind %>% 
+  filter(!lat %in% NA)
+coords <- coords[c(4,15,14)]
+plot(coords[c(2,3)])
+
+# cargamos el vcf y lo pasamos a genlight
+vcf_Aspca <- gl.read.vcf("atipico_196ind.recode.vcf")
+
+# filtramos el vcf con solo los individuos con coordenadas
+vcf_Acoords <- gl.keep.ind(vcf_Aspca, coords$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# convertimos a genind
+gi_Acoords <- gl2gi(vcf_Acoords)
+gi_Acoords@other$xy <- coords[c(2,3)]
+
+# realizamos el spaca
+# usamos Neighbourhood by distance con una distancia minima de cero y la maxima igual a la minima detectada
+# escogemos 5 ejes positivos y 6 ejes negativos
+Aspca <- spca(gi_Acoords, type=5, d1=0, d2="dmin")
+
+# vemos que eje son los mas relevantes 
+screeplot(Aspca)
+
+# estos son los ejes mas relevantes
+colnames(Aspca$ls)
+
+par(mfrow = c(1, 2)) 
+# graficamos el #1 pc del sPCA
+plot(gi_Acoords@other$xy)
+s.value(gi_Acoords@other$xy, Aspca$ls[,1], add.p=T, cleg=0) 
+
+# graficamos el #2 pc del sPCA
+plot(gi_Acoords@other$xy)
+s.value(gi_Acoords@other$xy, Aspca$ls[,2], add.p=T, cleg=0) 
+
+# evaluamos diferencias a nivel global
+x.Adat <- tab(gi_Acoords,freq=TRUE,NA.method="mean")
+AmyGtest <- global.rtest(x.Adat, Aspca$lw, nperm=999)
+AmyGtest 
+plot(AmyGtest)
+
+# evaluamos diferencias a nivel local
+AmyLtest <- local.rtest(x.Adat, Aspca$lw, nperm=999)
+AmyLtest 
+plot(AmyLtest) #not significant
+
+
+#
+########## sPCA neutral #########
+
+# Cargamos las coordenadas
+View(ibs_ind)
+
+# filtramos los ind con NA
+coords <- ibs_ind %>% 
+  filter(!lat %in% NA)
+coords <- coords[c(4,15,14)]
+plot(coords[c(2,3)])
+
+# cargamos el vcf y lo pasamos a genlight
+vcf_spca <- gl.read.vcf("neutral_196ind.recode.vcf")
+
+# filtramos el vcf con solo los individuos con coordenadas
+vcf_coords <- gl.keep.ind(vcf_spca, coords$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+
+# convertimos a genind
+gi_coords <- gl2gi(vcf_coords)
+gi_coords@other$xy <- coords[c(2,3)]
+
+# realizamos el spaca
+# usamos Neighbourhood by distance con una distancia minima de cero y la maxima igual a la minima detectada
+# escogemos 5 ejes positivos y 6 ejes negativos
+spca <- spca(gi_coords, type=5, d1=0, d2="dmin")
+
+# vemos que eje son los mas relevantes 
+screeplot(spca)
+
+# estos son los ejes mas relevantes
+colnames(spca$ls)
+
+par(mfrow = c(1, 2)) 
+# graficamos el #1 pc del sPCA
+plot(gi_coords@other$xy)
+s.value(gi_coords@other$xy, spca$ls[,1], add.p=T, cleg=0) 
+
+# graficamos el #2 pc del sPCA
+plot(gi_coords@other$xy)
+s.value(gi_coords@other$xy, spca$ls[,2], add.p=T, cleg=0) 
+
+# evaluamos diferencias a nivel global
+x.dat <- tab(gi_coords,freq=TRUE,NA.method="mean")
+myGtest <- global.rtest(x.dat, spca$lw, nperm=999)
+myGtest 
+plot(myGtest)
+
+# evaluamos diferencias a nivel local
+myLtest <- local.rtest(x.dat, spca$lw, nperm=999)
+myLtest 
+plot(myLtest) #not significant
+
+
+#
+########## GENELAND neutral ########
+forest_gi <- gl2gi(forest_nuetral) # este archivo se consigue en la parte de "estructura neutral"
+gitab <- forest_gi@tab # solo para comparar con la estructura del archivo geneland
+
+genland_file <- read.table("vcf_n_geneland.txt", stringsAsFactors = FALSE) # el txt se optiene con pgdspider
+rownames(genland_file) <- ibs_ind$Sample_Name_Plate
+
+# coordenadas
+indOmar <- read.table("ind_o_bosque.txt", header = F)
+meta_196ind <- meta_gbs[meta_gbs$Sample_Name_Plate %in% indOmar$V1,]
+coordsgeneland <- as.data.frame(meta_196ind[c(4,15,14)])
+coordsgeneland <- coordsgeneland %>% 
+  filter(!lat %in% NA)
+
+# eliminamos los ind sin coordenadas del archivo vcf_196ind.txt
+genland_file <- genland_file[rownames(genland_file) %in% coordsgeneland$Sample_Name_Plate, ]
+genland_file <- apply(genland_file, 2, as.integer)
+genland_file <- as.matrix(genland_file)
+mode(genland_file)       # debe ser "integer"
+typeof(genland_file[1])  # debe ser "integer"
+
+coordsgeneland <- coordsgeneland[-1]
+colnames(coordsgeneland) <- c("X","Y")
+attr(coordsgeneland, "projection") <- "LL"
+attr(coordsgeneland, "zone") <- 14
+attr(coordsgeneland, "hemisphere") <- "north" 
+coordsgeneland.utm <- convUL(coordsgeneland, southern = F)
+coords_matrix <- as.matrix(coordsgeneland.utm)
+mode(coords_matrix) <- "numeric"
+is.matrix(coords_matrix)        # TRUE
+typeof(coords_matrix[1,1])      # "double" o "numeric"
+dim(coords_matrix)              # Debe ser n_individuos x 2
+plot(coords_matrix,xlab="Eastings",ylab="Northings",asp=1)
+
+# ahora el fenotipo
+meta_196ind$ozone_damage_percentage[is.na(meta_196ind$ozone_damage_percentage)] <- "0%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
+
+meta_196ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+ozo_daño <- as.data.frame(meta_196ind[c(4,14,22)])
+ozo_daño <- ozo_daño %>% 
+  filter(!lat %in% NA)
+ozo_daño <- as.data.frame(ozo_daño[c(3)] )
+ozo_bin <- model.matrix(~ ozone_damage_percentage - 1, data = ozo_daño)
+colnames(ozo_bin) <- c("0%", "10%", "10_40%", "40_70%")
+str(ozo_bin)
+typeof(ozo_bin)
+dim(ozo_bin)
+
+# corremos genland primero bajo el supuesto de que la estructura se debe a la distribucion espacial
+# aca ponemos como numero minimo de poblaciones 2 y como maximo el numero de parcelas, en ese caso son 14
+# ponemos que la incertidumbre del muestro es cero
+# 
+
+Geneland::MCMC(
+  coordinates = coords_matrix,
+  geno.dip.codom = genland_file,
+  varnpop=F,
+  npopinit = 4,
+  npopmin = 2,
+  npopmax=14,
+  spatial = T,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_espacial"
+)
+
+
+# de los archivos generados por la funcion GENELAND::MCMC se debe extraer informacion para hacer una evaluacion 
+# posterior 
+PostProcessChain(coordinates=coords_matrix,
+  path.mcmc="./GENELAND_espacial/",
+  nxdom=100,
+  nydom=100,
+  burnin=1)
+
+# estimamos el numero de poblaciones HWLE
+# este paso realiza una visualizacion de las poblaciones simuladas a partir de la distribucion posterior
+Plotnpop(path.mcmc="./GENELAND_espacial/",
+         burnin=1)
+
+# realizamos un mapa de la probabilidad posterior de los miembros de una poblacion
+PosteriorMode(coordinates=coords_matrix,
+              path.mcmc="./GENELAND_espacial/",
+              file="map.pdf")
+
+ozo_dañoid <- as.data.frame(meta_196ind[c(4,14,22)])
+ozo_dañoid <- ozo_daño %>% 
+  filter(!lat %in% NA)
+
+modal_n_espacial <- rio::import("./GENELAND_espacial/modal.pop.indiv.txt")
+colnames(modal_n_espacial) <- c("long", "lat", "pop")
+modal_n_espacial$ID <- ozo_dañoid$Sample_Name_Plate
+modal_n_espacial %>% count(pop) # Poblaciones de geneland
+
+
+
+# corremos geneland  bajo el supuesto de que la estructura se debe a las categorias de daño
+
+# este archivo tiene 191 individuos, algunos de ellos no tienen coordenadas
+genland_file2 <- read.table("vcf_geneland.txt", stringsAsFactors = FALSE) # el txt se optiene con pgdspider
+rownames(genland_file2) <- ibs_ind$Sample_Name_Plate 
+
+# ahora el fenotipo
+meta_196ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+ozo_191 <- as.data.frame(meta_196ind[c(4,22)])
+ozo_191 <- as.data.frame(ozo_191[c(2)] )
+
+# opcion 1 para especificar las categorias de daño, aca se realiza una variable dummy de la categoria de daño
+ozo_bin191 <- model.matrix(~ ozone_damage_percentage - 1, data = ozo_191)
+colnames(ozo_bin191) <- c("0%", "10%", "10_40%", "40_70%")
+str(ozo_bin191)
+typeof(ozo_bin191)
+dim(ozo_bin191)
+
+# opcion 2 para especificar las categorias de daño, aca se asignan numeros y solo se usa una columna
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "0%"] <- 1
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "10%"] <- 2
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "10_40%"] <- 3
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "40_70%"] <- 4
+ozo_191_2 <- as.matrix(ozo_191)
+mode(ozo_191_2) <- "numeric"
+str(ozo_191_2)
+typeof(ozo_191_2)
+dim(ozo_191_2)
+
+
+# corremos genland  bajo el supuesto de que la estructura se debe al fenotipo
+# aca ponemos como numero minimo de poblaciones 2 y como maximo el numero de grupos, en este caso 14 por las percelas 
+# del bosque y porque son 14 grupos que encontro el sPCA
+# en npopinit especificamos 4 porque son las poblaciones con las que deseamos iniciar el analis,
+# este numero se basa en las 4 categorias de daño, esto no significa que le digamos el numero fijo 
+# sino que empiece por 4 poblaciones y despuesv varie el numero de poblaciones entre 2 y 14
+
+
+Geneland::MCMC(
+  geno.dip.codom = genland_file2,
+  qtc = ozo_bin191,
+  varnpop=F,
+  npopinit = 4,
+  npopmin = 2,
+  npopmax= 14,
+  spatial = F,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_fenotipo"
+)
+
+
+# obtenemos el numero de K
+PostProcessChain(
+                 path.mcmc="./GENELAND_fenotipo/",
+                 nxdom=100,
+                 nydom=100,
+                 burnin=1)
+
+Plotnpop(
+         path.mcmc="./GENELAND_fenotipo/",
+         burnin=1)
+
+ozo_191ID <- as.data.frame(meta_196ind[c(4,22)])
+
+modal_n_fenotipo <- rio::import("./GENELAND_fenotipo/modal.pop.indiv.txt")
+modal_n_fenotipo$ozono <- ozo_191
+colnames(modal_n_fenotipo) <- c("long", "lat", "pop", "ozono")
+modal_n_fenotipo$ID <- ozo_191ID$Sample_Name_Plate
+modal_n_fenotipo %>% count(pop) # Poblaciones de geneland
+
+# ya que tenemos estos analis, procedemos a crear un data frame con la salida de 
+# find.clusters y la salida de geneland
+
+resul_priori <- pop_find
+colnames(resul_priori) <-"findclusters"
+resul_priori$geneland <- modal_n_fenotipo$pop
+resul_priori$ozono <- ozo_191ID$ozone_damage_percentage
+write.csv(resul_priori, "resul_priori.csv")
+
+# finalmente realizamos un analisis con los datos fenotipicos y las coordenadas
+Geneland::MCMC(
+  coordinates = coords_matrix,
+  geno.dip.codom = genland_file,
+  qtc = ozo_bin,
+  varnpop=F,
+  npopinit = 4,
+  npopmin = 2,
+  npopmax=14,
+  spatial = T,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_fen_paj"
+)
+
+
+# de los archivos generados por la funcion GENELAND::MCMC se debe extraer informacion para hacer una evaluacion 
+# posterior 
+PostProcessChain(coordinates=coords_matrix,
+                 path.mcmc="./GENELAND_fen_paj/",
+                 nxdom=100,
+                 nydom=100,
+                 burnin=1)
+
+# estimamos el numero de poblaciones HWLE
+# este paso realiza una visualizacion de las poblaciones simuladas a partir de la distribucion posterior
+Plotnpop(path.mcmc="./GENELAND_fen_paj/",
+         burnin=1)
+
+# realizamos un mapa de la probabilidad posterior de los miembros de una poblacion
+PosteriorMode(coordinates=coords_matrix,
+              path.mcmc="./GENELAND_fen_paj/",
+              file="map.pdf")
+
+ozo_191ID <- as.data.frame(meta_196ind[c(4,22)])
+
+
+modal_n_fenpaj <- rio::import("./GENELAND_fen_paj/modal.pop.indiv.txt")
+modal_n_fenpaj$ozono <- ozo_bin
+colnames(modal_n_fenpaj) <- c("long", "lat", "pop", "ozono")
+
+modal_n_fenpaj %>% count(pop) # Poblaciones de geneland
+
+
+#
+########## GENELAND atipico ########
+forest_gi <- gl2gi(forest_nuetral) # este archivo se consigue en la parte de "estructura neutral"
+gitab <- forest_gi@tab # solo para comparar con la estructura del archivo geneland
+
+genland_fileA <- read.table("vcf_A_geneland.txt", stringsAsFactors = FALSE) # el txt se optiene con pgdspider
+rownames(genland_fileA) <- ibs_ind$Sample_Name_Plate
+
+# coordenadas
+indOmar <- read.table("ind_o_bosque.txt", header = F)
+meta_196ind <- meta_gbs[meta_gbs$Sample_Name_Plate %in% indOmar$V1,]
+coordsgeneland <- as.data.frame(meta_196ind[c(4,15,14)])
+coordsgeneland <- coordsgeneland %>% 
+  filter(!lat %in% NA)
+
+# eliminamos los ind sin coordenadas del archivo vcf_196ind.txt
+genland_fileA <- genland_fileA[rownames(genland_fileA) %in% coordsgeneland$Sample_Name_Plate, ]
+genland_fileA <- apply(genland_fileA, 2, as.integer)
+genland_fileA <- as.matrix(genland_fileA)
+mode(genland_fileA)       # debe ser "integer"
+typeof(genland_fileA[1])  # debe ser "integer"
+
+coordsgeneland <- coordsgeneland[-1]
+colnames(coordsgeneland) <- c("X","Y")
+attr(coordsgeneland, "projection") <- "LL"
+attr(coordsgeneland, "zone") <- 14
+attr(coordsgeneland, "hemisphere") <- "north" 
+coordsgeneland.utm <- convUL(coordsgeneland, southern = F)
+coords_matrix <- as.matrix(coordsgeneland.utm)
+mode(coords_matrix) <- "numeric"
+is.matrix(coords_matrix)        # TRUE
+typeof(coords_matrix[1,1])      # "double" o "numeric"
+dim(coords_matrix)              # Debe ser n_individuos x 2
+plot(coords_matrix,xlab="Eastings",ylab="Northings",asp=1)
+
+# ahora el fenotipo
+meta_196ind$ozone_damage_percentage[is.na(meta_196ind$ozone_damage_percentage)] <- "0%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
+meta_196ind$ozone_damage_percentage[meta_196ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
+
+meta_196ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+ozo_daño <- as.data.frame(meta_196ind[c(4,14,22)])
+ozo_daño <- ozo_daño %>% 
+  filter(!lat %in% NA)
+ozo_daño <- as.data.frame(ozo_daño[c(3)] )
+ozo_bin <- model.matrix(~ ozone_damage_percentage - 1, data = ozo_daño)
+colnames(ozo_bin) <- c("0%", "10%", "10_40%", "40_70%")
+str(ozo_bin)
+typeof(ozo_bin)
+dim(ozo_bin)
+
+# corremos genland primero bajo el supuesto de que la estructura se debe a la distribucion espacial
+# aca ponemos como numero minimo de poblaciones 2 y como maximo el numero de parcelas, en ese caso son 14
+# ponemos que la incertidumbre del muestro es cero
+# 
+
+Geneland::MCMC(
+  coordinates = coords_matrix,
+  geno.dip.codom = genland_fileA,
+  varnpop=T,
+  npopmin = 2,
+  npopmax=15,
+  spatial = T,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_espacial_ATIPICO"
+)
+
+
+# de los archivos generados por la funcion GENELAND::MCMC se debe extraer informacion para hacer una evaluacion 
+# posterior 
+PostProcessChain(coordinates=coords_matrix,
+                 path.mcmc="./GENELAND_espacial_ATIPICO/",
+                 nxdom=100,
+                 nydom=100,
+                 burnin=1)
+
+# estimamos el numero de poblaciones HWLE
+# este paso realiza una visualizacion de las poblaciones simuladas a partir de la distribucion posterior
+Plotnpop(path.mcmc="./GENELAND_espacial_ATIPICO/",
+         burnin=1)
+
+# realizamos un mapa de la probabilidad posterior de los miembros de una poblacion
+PosteriorMode(coordinates=coords_matrix,
+              path.mcmc="./GENELAND_espacial_ATIPICO/",
+              file="map.pdf")
+
+modal_A <- rio::import("./GENELAND_espacial_ATIPICO/modal.pop.indiv.txt")
+modal_A$ID <- ozo_daño
+
+# corremos geneland  bajo el supuesto de que la estructura se debe a las categorias de daño
+
+# este archivo tiene 191 individuos, algunos de ellos no tienen coordenadas
+genland_file_A2 <- read.table("vcf_A_geneland.txt", stringsAsFactors = FALSE) # el txt se optiene con pgdspider
+rownames(genland_file_A2) <- ibs_ind$Sample_Name_Plate 
+
+# ahora el fenotipo
+meta_196ind %>% count(ozone_damage_percentage) # las categorias a usar
+
+ozo_191 <- as.data.frame(meta_196ind[c(4,22)])
+ozo_191 <- as.data.frame(ozo_191[c(2)] )
+
+# opcion 1 para especificar las categorias de daño, aca se realiza una variable dummy de la categoria de daño
+ozo_bin191 <- model.matrix(~ ozone_damage_percentage - 1, data = ozo_191)
+colnames(ozo_bin191) <- c("0%", "10%", "10_40%", "40_70%")
+str(ozo_bin191)
+typeof(ozo_bin191)
+dim(ozo_bin191)
+
+# opcion 2 para especificar las categorias de daño, aca se asignan numeros y solo se usa una columna
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "0%"] <- 1
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "10%"] <- 2
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "10_40%"] <- 3
+ozo_191$ozone_damage_percentage[ozo_191$ozone_damage_percentage %in% "40_70%"] <- 4
+ozo_191_2 <- as.matrix(ozo_191)
+mode(ozo_191_2) <- "numeric"
+str(ozo_191_2)
+typeof(ozo_191_2)
+dim(ozo_191_2)
+
+
+# corremos genland  bajo el supuesto de que la estructura se debe al fenotipo
+# aca ponemos como numero minimo de poblaciones 2 y como maximo el numero de grupos, en este caso 4
+
+Geneland::MCMC(
+  geno.dip.codom = genland_file_A2,
+  qtc = ozo_191_2,
+  varnpop=T,
+  npopmin = 2,
+  npopmax= 15,
+  spatial = F,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_fenotipo_atipico"
+)
+
+
+# obtenemos el numero de K
+PostProcessChain(
+  path.mcmc="./GENELAND_fenotipo_atipico/",
+  nxdom=100,
+  nydom=100,
+  burnin=1)
+
+Plotnpop(
+  path.mcmc="./GENELAND_fenotipo_atipico/",
+  burnin=1)
+
+modal_A_fenotipo <- rio::import("./GENELAND_fenotipo_atipico/modal.pop.indiv.txt")
+modal_A_fenotipo$ozono <- ozo_191
+colnames(modal_A_fenotipo) <- c("long", "lat", "pop", "ozono")
+modal_A_fenotipo %>% count(pop) # Poblaciones de geneland
+
+
+# finalmente realizamos un pop# finalmente realizamos un analisis con los datos fenotipicos y las coordenadas
+Geneland::MCMC(
+  coordinates = coords_matrix,
+  geno.dip.codom = genland_file,
+  qtc = ozo_bin,
+  varnpop=T,
+  npopmin = 2,
+  npopmax=15,
+  spatial = T,
+  nit = 5000,
+  thinning = 100,
+  freq.model =  "Correlated",
+  path.mcmc="./GENELAND_fen_paj"
+)
+
+
+# de los archivos generados por la funcion GENELAND::MCMC se debe extraer informacion para hacer una evaluacion 
+# posterior 
+PostProcessChain(coordinates=coords_matrix,
+                 path.mcmc="./GENELAND_fen_paj/",
+                 nxdom=100,
+                 nydom=100,
+                 burnin=1)
+
+# estimamos el numero de poblaciones HWLE
+# este paso realiza una visualizacion de las poblaciones simuladas a partir de la distribucion posterior
+Plotnpop(path.mcmc="./GENELAND_fen_paj/",
+         burnin=1)
+
+# realizamos un mapa de la probabilidad posterior de los miembros de una poblacion
+PosteriorMode(coordinates=coords_matrix,
+              path.mcmc="./GENELAND_fen_paj/",
+              file="map.pdf")
 
 ########## estructura genetica espacial a resolucion fina (FSSR) ########
 # vamos a evaluar la autocorrelacion espacial, usaremos el coeficiente de parentesco de
@@ -396,561 +1330,37 @@ distgeo <- as.matrix(dgeo)
 gl.plot.heatmap(distgeo)
 heatmap(distgeo, col = colorRampPalette(c("blue", "white", "red"))(100), symm = TRUE)
 #
+########## colinearidad ########
 
-########## separar loci candidatos de neutrales ####
+# cargamos los datos de las coordenadas y datos geneticos 
+coord <- read.csv("F:/fenotipo_ambiente/ambiente/Qgis (1)/ind_gbs_coord.csv")
+puntos <- st_as_sf(coord, coords = c("longitude", "latitude"), crs = 6369)
+print(puntos)
 
-# cargamos el vcf y solo nos quedamos con los individuos del bosque y 
-# solo excluimos a los individuos repetidos
-vcfR_paisaje <- gl.read.vcf("GBS_data.recode.vcf")
+IBD_dist <- geo_dist(puntos, type = "Euclidean")
 
-# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
-meta_gbs %>% count(Treatment)
-f <- c("forest")
-bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
-forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+proj <- CRS("+init=epsg:6369")
+xy_points <- SpatialPoints(coord[, c(2, 3)], proj4string = proj)
+IBD_dist <- distmat(xy_points,method="ed")
+IBD_dist [1:10,1:10]
 
-# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
-bosque_ind %>% count(reforested)
+vcfR_paisaje <- read.vcfR("F:/Gih/Genomica_del_paisaje/pasos_en_R/todas_muestras/muestras_paisaje.recode.vcf")
 
-nof <- "no"
+paisaje_gen <- vcfR2genind(vcfR_paisaje)
+pop(paisaje_gen) <- coord$pop
 
-bosque_ind <- bosque_ind[bosque_ind$reforested %in% nof, ]
-bosque_ind %>% count(reforested)
+radius <- 500 # for this demo, units are in meters 6000
+IBD_GD <- sGD(paisaje_gen,
+              coord,
+              IBD_dist,
+              radius,
+              min_N=5,
+              metrics="GD")
 
-# volvemos a cortar el vcf 
-forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
+write.csv(IBD_GD, "IBD_GD_resultado.csv")
 
-# creamos un archivo genepop como lo quiere fsthet
-vcfR_paisaje <- read.vcfR("GBS_data.recode.vcf")
-geno <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
-geno <- t(geno)
+# esta aproximacion es menos eficiente y una mas actual es la propuesta por Bishop: 
+# https://doi.org/10.1111/2041-210X.14090  
+# pero esta aproximacion se realizara en la parte de diversidad_genetica
 
-# como es el vcf general solo lo filtramos con los individuos del bosque
-geno <- geno[rownames(geno) %in% forest@ind.names, ] 
 
-G <- matrix(geno, nrow = nrow(geno), ncol = ncol(geno))
-
-# cambiamos el fomato segun el tutorial de fsthet
-G[geno %in% c("0/0")] <- "0101"
-G[geno  %in% c("0/1")] <- "0102"
-G[geno  %in% c("1/0")] <- "0201"
-G[geno %in% c("1/1")] <- "0202"
-
-# agregamos el nombre de los loci
-colnames(G) <- vcfR_paisaje@fix[,3]
-
-# agregamos el nombre de los individuos y el porcentaje de daño por ozono
-pop.info <- posterior$pop_probable
-ind.names <- bosque_ind$Sample_Name_Plate
-
-G <- cbind(pop.info, ind.names, G)
-
-# calculamos los Fst y Ht para los loci (Flanagan & Jones, (2017)
-fsts<-calc.actual.fst(G,"fst")
-head(fsts)
-
-par(mar=c(4,4,1,1))
-plot(fsts$Ht, fsts$Fst,xlab="Ht",ylab="Fst",pch=19)
-
-# estimamos los outlayers, creamos un grafico y los guardamos en txt
-quant.out<-fst.boot(G, bootstrap = T)
-outliers<-find.outliers(fsts,boot.out=quant.out)
-snps_outliers <- as.vector(outliers$Locus)
-write.table(snps_outliers, "outliers_pop_daño.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-head(outliers)
-out.dat<-fsthet(G)
-head(out.dat)
-
-# ahora estimaremos los outliers con pcadapt
-# convertimos a genind para despues extraer los snps en forma binaria 
-genind_paisaje <- gl2gi(forest)
-
-geno_matrix <- as.matrix(genind_paisaje@tab)
-View(geno_matrix) # el formato se asemeja binario de ped
-
-geno_matrix  <- t(geno_matrix)
-
-filename <- read.pcadapt(geno_matrix , type = "pcadapt")
-
-x <- pcadapt(filename, K=50)
-
-plot(x, option = "screeplot")
-plot(x, option = "scores")
-plot(x, option = "scores", i = 3, j = 4)
-
-# usaremos el metodo de q y fdr
-qval <- qvalue(x$pvalues)$qvalues
-alpha <- 0.1
-outpcadapt <- which(qval < alpha)
-outpcadapt # estas son las filas donde debe estar el outlier en geno_matrix
-
-outliers_v1 <- geno_matrix[outpcadapt,]
-rownames(outliers_v1)
-
-# esta es una segunda opcion para realizar el pcadapt
-G_pcadapt <- extract.gt(vcfR_paisaje) # obtenemos una matriz que contiene a los genotipos 
-
-# como es el vcf general solo lo filtramos con los individuos del bosque
-G_pcadapt <- G_pcadapt[,colnames(G_pcadapt) %in% forest@ind.names] 
-
-# en estsion oun locus, por lo que cero y 2 son homocigos
-G_pcadapt[G_pcadapt %in% c("0/0")] <- "0"
-G_pcadapt[G_pcadapt  %in% c("1/0", "0/1")] <- "1"
-G_pcadapt[G_pcadapt %in% c("1/1")] <- "2"
-
-filename2 <- read.pcadapt(G_pcadapt , type = "pcadapt")
-
-x2 <- pcadapt(filename2, K=50)
-
-plot(x2, option = "screeplot")
-plot(x2, option = "scores")
-plot(x2, option = "scores", i = 3, j = 4)
-
-# usaremos el metodo de q y fdr
-qval2 <- qvalue(x2$pvalues)$qvalues
-alpha <- 0.1
-outpcadapt_v2 <- which(qval2 < alpha)
-outpcadapt_v2 # estas son las filas donde debe estar el outlier en geno_matrix
-
-outliers <- G_pcadapt[outpcadapt_v2, ]
-rownames(outliers) # este es el bueno 
-rownames(outliers_v1)
-
-pcadap_outlier <- rownames(outliers) 
-pcadap_outlier
-
-write.table(pcadap_outlier, "pcadap_outlier.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-
-
-# vamoa usar bayescan para teener un tercer respaldo de los snps atipicos
-# primero creamos un archivo apto para bayescan
-forest
-gl2bayescan(forest, outfile = "bayescan_forest.txt", outpath = ".")
-
-# en el manual de bayescan existe una funcion para graficar los resultados
-source("plot_R_bayescan.r")
-plot_bayescan("forests_gbs_fst.txt", FDR=0.1) # no hay atipicos, pero no nos rendiremos
-
-# apartir de una tabla ya construida, G, la usada para el analis de fsthet vamos a contruir una tabla segun 
-# el ejemplo de "test_genotype_SNP.txt" de bayescan, en el cual los individuos estan en las filas y se ordenan por 
-# poblacion
-
-# ordenamos la filas por categoria de daño
-Gbayes <- as.data.frame(G)
-Gbayes <- Gbayes %>% arrange(pop.info)
-
-# realizamos un conteo de los individuos por grupo
-conteog <- Gbayes %>%
-  group_by(pop.info) %>%            # Agrupar por la columna de categorías
-  mutate(conteo = row_number())  # Agregar un conteo de 1 a N dentro de cada categoría
-
-# agregamos el conteo al inicio 
-# despues eliminamos las colunas 4 con los nombres de los individuos
-group <- conteog$conteo
-Gbayes <- cbind("\t",group, Gbayes,"\t" )
-Gbayes <- Gbayes[ -c(4)]
-
-
-# cambiamos enotipos a codigo "binario"
-# dejar los NA solos no funciona, pero usar 9 como missing data si funciona
-Gbayes <- Gbayes %>%
-  mutate_all(~ as.character(.) %>%
-               replace(. %in% c("0101"), "0") %>%
-               replace(. %in% c(NA), "9") %>%
-               replace(. %in% c("0102", "0201"), "1") %>%
-               replace(. %in% c("0202"), "2"))
-
- 
-#las poblaciones las pasamos a numeros
-Gbayes <- Gbayes %>%
-  mutate_all(~ as.character(.) %>%
-               replace(. %in% c("0%"), "1") %>%
-               replace(. %in% c("10%"), "2") %>%
-               replace(. %in% c("10_40%"), "3") %>%
-               replace(. %in% c("40_70%"), "4"))
-  
-
-# guardamos
-write.table(Gbayes, "Gbayes.txt", sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-
-source("plot_R_bayescan.r")
-plot_bayescan("Gbayes_fst.txt", FDR=0.1) # no hay atipicos, pero nos rendiremos
-
-
-# esta seria la lista final de outliers, solo tivimos outliers con
-# pcadapt y fsthet
-pcadap_outlier
-snps_outliers
-
-# Encontrar los elementos que están en ambas listas
-duplicados <- intersect(pcadap_outlier, snps_outliers)
-
-# Mostrar los duplicados, esto nos dice que las señales son correctas?
-print(duplicados)
-
-# Eliminar los duplicados de la lista `pcadap_outlier`
-pcadap_outlier <- setdiff(pcadap_outlier, duplicados)
-
-# Unir las dos listas sin duplicados
-outliers_combinados <- union(pcadap_outlier, snps_outliers)
-
-# los guardamos para despues eliminarnos del vcf GBS_data, para asi tener nuestro set de loci potencialmente neutrales
-write.table(outliers_combinados, "LOCI_ATIPICOS.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-# recuarda ejecutar vcftools en la carpeta de estructura_genetica 
-# vcftools --vcf GBS_data.recode.vcf --exclude LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_neutral
-# vcftools --vcf GBS_data.recode.vcf --snps LOCI_ATIPICOS.txt --recode --recode-INFO-all --out set_casi_atipico
-
-# "outliers_pop_daño.txt"
-# "pcadap_outlier.txt"
-
-########## estructura neutral #####
-# muestras sin outliers
-vcf_sin <- gl.read.vcf("set_casi_neutral.recode.vcf")
-
-# volvemos a cortar el vcf 
-forest_nuetral <- gl.keep.ind(vcf_sin, ind_filt$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-pop(forest_nuetral) <- posterior$pop_probable # las categorias de daño son nuestra poblacion
-
-# cargamos los datos de las categorias de daño
-paj_sin<-xvalDapc(tab(forest_nuetral,NA.method="mean"), pop(forest_nuetral))
-plotdapc <- scatter(paj_sin$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
-                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
-
-
-# muestras solo outliers
-vcf_con <- gl.read.vcf("set_casi_atipico.recode.vcf")
-forest_atipico <- gl.keep.ind(vcf_con , ind_filt$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-pop(forest_atipico) <- posterior$pop_probable # las categorias de daño son nuestra poblacion
-paj_con<-xvalDapc(tab(forest_atipico ,NA.method="mean"), pop(forest_atipico))
-plotdapc <- scatter(paj_con$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
-                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
-#
-
-########## snmf neutral ####
-# creamos un archivo ped para el snmf
-# vcftools --vcf neutral_196ind.recode.vcf --plink --out neutral_196ind
-
-ped2geno("neutral_196ind.ped")
-ped_data <- read.table("neutral_196ind.ped", header = FALSE, sep = " ")
-geno <- read.geno("neutral_196ind.geno") # esto lo hacemos para ver el orden de los individuos
-
-# corremos un snmf con pocas iteraciones
-snmf_196 = snmf("neutral_196ind.geno", 
-                       iterations=1000, K=1:10, rep=30, 
-                       entropy=T, CPU=4, ploidy=2, 
-                       project="new")
-plot(snmf_196,lwd=8,col="#9215D0",pch=1, cex=2)
-snmf_ind_estructura = load.snmfProject("neutral_196ind.snmfProject")
-best=which.min(cross.entropy(snmf_ind_estructura, K=4))
-my.colors <- c("tomato", "lightblue",
-               "olivedrab", "gold")
-
-barchart(snmf_ind_estructura, K = 4, run = best,
-         border = NA, space = 0,
-         col = my.colors,
-         xlab = "Individuos",
-         ylab = "Proporciones ancestrales",
-         main = "Ancestria") -> bp
-axis(1, at = 1:length(bp$order),
-     labels = bp$order, las=1,
-     cex.axis = .4)
-#
-
-# corremos find.cluster, se escoje un numero maximo de clusters de 10 y 200 pca para empezar el analisis
-# el numero maximo de pcas no debe superar N/3 
-set.seed(123)
-findclust <- gl.read.vcf("neutral_196ind.recode.vcf")
-grp <- find.clusters(findclust, max.n.clust = 10, n.pca = 100, choose = FALSE, stat = "BIC", method = "kmeans")
-plot(grp$Kstat, type = "o", xlab = "numero de grupos (K)",
-     ylab = "BIC",
-     main = "find.clusters")
-
-grp$grp
-grp$size
-table(pop(findclust), grp$grp)
-
-dapc1 <- dapc(findclust, grp$grp, n.pca = 50, n.da = 4) 
-scatter(dapc1) # graficamos, los resultados indican que existen 4 grupos
-
-########## predecir con dapc #######
-# cargamos el vcf con los snps neutrales
-vcfR_paisaje <- gl.read.vcf("set_casi_atipico.recode.vcf")
-
-# usaremos forest para separar a los individuos del bosque ya que son los que tienen una categoria de daño
-meta_gbs %>% count(Treatment)
-f <- "forest"
-bosque_ind <- meta_gbs[meta_gbs$Treatment %in% f, ]
-forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
-bosque_ind %>% count(reforested)
-
-nof <- "no"
-pp <- c("PP01_NNAP01", "PP03_NNAP01", "PP04_NNAP01", "PP05_NNAP01" )
-
-bosque_ind <- bosque_ind[bosque_ind$reforested %in% nof, ]
-pp <- 
-bosque_ind %>% count(reforested)
-
-# volvemos a cortar el vcf 
-forest <- gl.keep.ind(vcfR_paisaje, bosque_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-pop(forest) <- posterior$pop_probable # las categorias de daño predichas previamente
-
-paj<-xvalDapc(tab(forest,NA.method="mean"), pop(forest))
-plotdapc <- scatter(paj$DAPC, mstree = T, clabel = T, lwd = 2, grid=T, cex=3,
-                    cleg = 0.80, posi.da = "bottomleft", col = c("darkgreen","gold2", "chocolate1", "red4")  )
-
-# creamos el archivo con los individuos a predecir 
-others_ind <- meta_gbs[!meta_gbs$Treatment %in% f, ]
-others <- gl.keep.ind(vcfR_paisaje, others_ind$Sample_Name_Plate, recalc = FALSE, mono.rm = FALSE, verbose = 3)
-
-# realizamos la prediccion
-pred.sup <- predict.dapc(paj$DAPC, newdata=others)
-
-round(pred.sup$posterior,3)
-
-
-col <- c("darkgreen","gold2", "chocolate1", "red4")
-col.points <- transp(col[as.integer(pop(forest))],.2)
-scatter(paj$DAPC, col=col, bg="white", scree.da=0, pch="",
-        cstar=0, clab=0, xlim=c(-5,15), legend=TRUE)
-par(xpd=TRUE)
-points(paj$DAPC$ind.coord[,1], paj$DAPC$ind.coord[,2], pch=20,
-       col=col.points, cex=5)
-col.sup <- col[as.integer(pop(others))]
-points(pred.sup$ind.scores[,1], pred.sup$ind.scores[,2], pch=15,
-       col=transp(col.sup,.7), cex=2)
-add.scatter.eig(paj$DAPC$eig,15,1,2, posi="bottomright", inset=.02)
-
-posterior_no_ferest<- as.data.frame(pred.sup$posterior)
-
-posterior_no_ferest$pop_probable <- apply(posterior_no_ferest[,1:4], 1, function(x){
-  names(posterior_no_ferest)[which.min(abs(x-1))]
-} )
-
-#
-
-
-########## identity by state #####
-
-# usaremos los indivuos de forest y potentiel_mother para estimar la matriz de IBS
-meta_196ind <- read.csv("df_GBS_metadata.csv")
-
-meta_196ind %>% count(Treatment)
-fyp <- c("forest", "potential_mother")
-ibs_ind <- meta_gbs[meta_gbs$Treatment %in% fyp, ]
-
-# eliminamos los reforestados y las muestras repetidas (NA en estas cuentas)
-ibs_ind %>% count(reforested)
-nof <- "no"
-ibs_ind <- ibs_ind[ibs_ind$reforested %in% nof, ]
-
-# asiganamos las categorias de daño a los individuos del bosque
-ibs_ind$ozone_damage_percentage[is.na(ibs_ind$ozone_damage_percentage)] <- "0%"
-ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("less than 10%")] <- "10%"
-ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("10 to 40%")] <- "10_40%"
-ibs_ind$ozone_damage_percentage[ibs_ind$ozone_damage_percentage  %in% c("40 to 50%", "50 to 70%", "more than 70%")] <- "40_70%"
-
-ibs_ind %>% count(ozone_damage_percentage) # las categorias a usar
-
-
-
-
-# para mayor facilidad en analisis subsecuentes generaremos un vcf con las muestras que solo necesitare
-bosque <- as.data.frame(ibs_ind$Sample_Name_Plate)
-write.table(bosque, "ind_o_bosque.txt",  sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
-# vcftools --vcf set_casi_neutral.recode.vcf --keep ind_o_bosque.txt --recode --recode-INFO-all --out neutral_196ind
-
-snpgdsVCF2GDS("neutral_196ind.recode.vcf", "test.gds", method="biallelic.only")
-snpgdsSummary("test.gds")
-genofile <-  snpgdsOpen("test.gds")
-
-sample.id <- read.gdsn(index.gdsn(genofile, "sample.id"))
-
-# Realizamos la estimacion del parentesco con el metodo de KING
-kinshipGBS<- snpgdsIBDKING(genofile)
-
-# estraemos la matriz de consaguiniedad
-kin_matrixGBSAll  <- kinshipGBS$kinship
-
-# Asignar nombres a filas y columnas (importante para identificación)
-rownames(kin_matrixGBSAll) <- colnames(kin_matrixGBSAll) <- sample.id 
-
-# Definir colores para categorias de daño 
-colors_daño <- list(
-  daño = c(
-    "0%" = "darkgreen", 
-    "10%" = "gold2", 
-    "10_40%" = "chocolate1", 
-    "40_70%" = "red4"
-  )
-)
-
-colors_herarchy <- list(
-  edad = c(
-    "plantula" = "lightpink", 
-    "juvenil" = "#697329", 
-    "adulto" = "black"
-  )
-)
-
-# hacer un data frame para las anotaciones
-ano_king <- data.frame(ibs_ind[c(22)])
-rownames(ano_king) <- ibs_ind$Sample_Name_Plate
-colnames(ano_king) <-"daño"
-
-pheatmap(kin_matrixGBSAll, 
-         annotation_row = ano_king, 
-         annotation_col = ano_king, 
-         annotation_colors = colors_daño,
-         display_numbers = FALSE, 
-         color = colorRampPalette(c("blue", "white", "red"))(100),
-         main = "Matriz de Parentesco (IBD) All SNPs",
-         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
-         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
-)
-
-# hacer un data frame para las anotaciones, estas anotaciones se obtuvieron de mas abajo
-ano_her<- data.frame(ibs_ind[c(42)])
-rownames(ano_her) <- ibs_ind$Sample_Name_Plate
-colnames(ano_her) <-"edad"
-
-pheatmap(kin_matrixGBSAll, 
-         annotation_row = ano_her, 
-         annotation_col = ano_her, 
-         annotation_colors = colors_herarchy,
-         display_numbers = FALSE, 
-         color = colorRampPalette(c("blue", "white", "red"))(100),
-         main = "Matriz de Parentesco (IBD) All SNPs",
-         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
-         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
-)
-
-# realizamos la estimacion con un calculo de IBS similar a plink:
-# 
-ibs <- snpgdsIBS(genofile, num.thread=2)
-
-# extraemos matriz 
-ibs_matirx  <- ibs$ibs
-
-# Asignar nombres a filas y columnas (importante para identificación)
-rownames(ibs_matirx) <- colnames(ibs_matirx) <- sample.id 
-
-# con la anotacion del daño
-pheatmap(ibs_matirx, 
-         annotation_row = ano_king, 
-         annotation_col = ano_king, 
-         annotation_colors = colors_daño,
-         display_numbers = FALSE, 
-         color = colorRampPalette(c("blue", "white", "red"))(100),
-         main = "Matriz de Parentesco (IBD) All SNPs",
-         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
-         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
-)
-
-
-# con la anotacion de las edades
-pheatmap(ibs_matirx, 
-         annotation_row = ano_her, 
-         annotation_col = ano_her, 
-         annotation_colors = colors_herarchy,
-         display_numbers = FALSE, 
-         color = colorRampPalette(c("blue", "white", "red"))(100),
-         main = "Matriz de Parentesco (IBD) All SNPs",
-         labels_row = rep("", nrow(kin_matrixGBSAll)),# Elimina las etiquetas de filas
-         labels_col = rep("", ncol(kin_matrixGBSAll)) #Elimina las etiquetas de columnas
-)
-#
-########## amova ########
-# creamos el set de datos que usaremos 
-# partiremos del siguiente set de datos
-View(ibs_ind)
-
-# cargamos el vcf y lo pasamos a genlight
-vcf_amova <- gl.read.vcf("neutral_196ind.recode.vcf")
-
-
-
-
-# vamos a usar las categorias originales 
-ibs_ind %>% count(tree_diameter_category)
-hierarchy1 <- ibs_ind[c(19)]
-colnames(hierarchy1)[colnames(hierarchy1) == "tree_diameter_category"] <- "Subpop"
-rownames(hierarchy1) <- vcf_amova@ind.names
-
-# especificamos los grupos en strata
-strata(vcf_amova) <- hierarchy1
-amova.result1 <- poppr.amova(vcf_amova, ~Subpop)
-amova.result1
-amova.test1 <- randtest(amova.result1)
-plot(amova.test1)
-
-
-# creamos una nueva columna y asignamos categorias
-# esto se basa en que las categorias sean homogeneas
-ibs_ind$hierarcgy_diameter <- ibs_ind$tree_diameter_category
-ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("0.5_cm", "1_cm")] <- "plantula"
-ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("2_cm", "6_cm","10_cm")] <- "juvenil"
-ibs_ind$hierarcgy_diameter[ibs_ind$hierarcgy_diameter  %in% c("30_cm", "40_cm")] <- "adulto"
-
-# editamos el data frame que especifica la jerarquia
-hierarchy <- ibs_ind[c(42)]
-colnames(hierarchy)[colnames(hierarchy) == "hierarcgy_diameter"] <- "Subpop"
-rownames(hierarchy) <- vcf_amova@ind.names
-
-# realizamos el amova
-strata(vcf_amova) <- hierarchy
-amova.result <- poppr.amova(vcf_amova, ~Subpop)
-amova.result
-amova.test <- randtest(amova.result)
-plot(amova.test)
-
-# ahora vamos a ver que sucede si tomamos los extremos
-ibs_ind$diameter_2 <- ibs_ind$tree_diameter_category
-ibs_ind$diameter_2[ibs_ind$diameter_2  %in% c("0.5_cm", "1_cm","2_cm", "6_cm")] <- "plantula"
-ibs_ind$diameter_2[ibs_ind$diameter_2  %in% c("10_cm", "30_cm", "40_cm")] <- "adulto"
-
-# editamos el data frame que especifica la jerarquia
-hierarchy2 <- ibs_ind[c(43)]
-colnames(hierarchy2)[colnames(hierarchy2) == "diameter_2"] <- "Subpop"
-rownames(hierarchy2) <- vcf_amova@ind.names
-
-# realizamos el amova
-strata(vcf_amova) <- hierarchy2
-amova.result <- poppr.amova(vcf_amova, ~Subpop)
-amova.result
-amova.test <- randtest(amova.result)
-plot(amova.test)
-
-
-# ahora agregamos la categorias de daño y las categorias de diametro
-hierarchy3 <- ibs_ind[c(22,19)]
-colnames(hierarchy3)[colnames(hierarchy3) == "ozone_damage_percentage"] <- "Pop"
-colnames(hierarchy3)[colnames(hierarchy3) == "tree_diameter_category"] <- "Subpop"
-rownames(hierarchy3) <- vcf_amova@ind.names
-
-# realizamos el amova con la categorias de daño y las categorias de diametro
-strata(vcf_amova) <- hierarchy3
-amova.result <- poppr.amova(vcf_amova, ~Pop/Subpop)
-amova.result
-amova.test <- randtest(amova.result)
-plot(amova.test)
-
-
-
-
-# ahora evaluamos solo las caegorias de daño
-hierarchy4 <- ibs_ind[c(22)]
-colnames(hierarchy4)[colnames(hierarchy4) == "ozone_damage_percentage"] <- "Subpop"
-rownames(hierarchy4) <- vcf_amova@ind.names
-
-# realizamos el amova solo con la categorias de daño
-strata(vcf_amova) <- hierarchy4
-amova.result <- poppr.amova(vcf_amova, ~Subpop)
-amova.result
-amova.test <- randtest(amova.result)
-plot(amova.test)
-#
