@@ -1,10 +1,13 @@
 ######## paquetes ########
+install.packages(c("", ))
+
 library(tidyr)
 library(dplyr)  # Para manipulación de datos
 library(rio)
 library(stringdist)
 library(stringr)
 library(bibliometrix)
+library(plyr)
 
 library(ggthemes)
 library(tidyverse)
@@ -275,7 +278,7 @@ p + geom_scatterpie(aes(x=long, y=lat, group=Country, r=Articles/5),
 
 
 #
-######### dendograma temas ######
+######### dendograma temas sobre palabras de los autores ######
 # realizamos pruebas iniciales
 
 # para hacer el dendograma de los topicos usamos las palabras de los autores.
@@ -314,6 +317,100 @@ CS3 <- conceptualStructure(M2, field="DE", method="CA", minDegree=10, clust= 6,
 CS4 <- conceptualStructure(M2, field="DE", method="MDS", minDegree=10, clust= 6,
                            k.max = 10, stemming=FALSE, labelsize=10, documents=10)
 #
+
+######### dendograma temas sobre resumen ######
+# caragamos la base de datos en formato bib
+file <- "base_bib_preliminar.bib"
+M <- convert2df(file = file, dbsource = "scopus", format = "bibtex")
+head(M$TI)
+
+# caragamos la base de datos pre-limpia
+bd <- read.csv("base_preeliminar.csv")
+bd$Title <- toupper(bd$Title)
+head(bd$Title)
+
+# filtramos la base de daos M para tener los mismos documentos que en bd
+M2 <- M[M$TI %in% bd$Title,]
+
+# al especificar que existe una coocurrencia minima dde 130 veces obtenemos 112 palabras, 
+# los analisis con las palabras clave de los autores son aproximadamente 90, asi que el resumen
+# de la informacion seria equiparable a la informacion del analisis de co-ocurrencia de wosview
+
+CS_AB_v2 <- conceptualStructure(M2, field="AB", method="MCA", minDegree=130, clust= 6,
+                             k.max = 10, stemming=FALSE, labelsize=5, documents=30)
+
+# al usar una co-ocurrencia minima de 63 recuperamos 304
+
+CS_AB_v3K8 <- conceptualStructure(M2, field="AB", method="MCA", minDegree=85, clust= 10,
+                                  k.max = 10, stemming=FALSE, labelsize=5, documents=30)
+
+
+# obtenemos las palabras y el color asociado (cluster)
+color <- CS_AB_v3K8[["graph_documents_TC"]][["plot_env"]][["df_clust"]][["color"]]
+palabra <- CS_AB_v3K8[["graph_documents_TC"]][["plot_env"]][["df_clust"]][["label"]]
+
+
+# CREAMOS UN DATA FRAME
+grupos <- cbind(palabra, color)
+colnames(grupos)
+
+
+# eliminamos NA
+grupos <- grupos[1:206,]
+
+# juntamos las dos bases de datos y las exportamos 
+base_asbtrac <- cbind(theashure_ab_v2, grupos)
+
+
+write.csv(base_asbtrac, "CS_AB_v3K10.csv", quote = F, row.names = T)
+
+# cargamos los datos 
+AB_BASE <- read.csv("CS_AB_v3K10.csv")
+
+# Cambiamos el nombre de los colores por letras para identificar cada grupo
+AB_BASE$color[AB_BASE$color == "#377EB8"] <- "A"
+AB_BASE$color[AB_BASE$color == "#4DAF4A"] <- "B"
+AB_BASE$color[AB_BASE$color == "#66C2A5"] <- "C"
+AB_BASE$color[AB_BASE$color == "#984EA3"] <- "D"
+AB_BASE$color[AB_BASE$color == "#999999"] <- "E"
+AB_BASE$color[AB_BASE$color == "#A65628"] <- "F"
+AB_BASE$color[AB_BASE$color == "#E41A1C"] <- "G"
+AB_BASE$color[AB_BASE$color == "#F781BF"] <- "H"
+AB_BASE$color[AB_BASE$color == "#FC8D62"] <- "I"
+AB_BASE$color[AB_BASE$color == "#FF7F00"] <- "J"
+
+# eliminamos aquellas palabras que esten bajo observacion, la desicion de que palabra esta bajo observacion
+# parte de que no haya palabras repetidas dentro de clada cluster, que hay palabras poco informativas para un cluster
+
+AB_BASE <- AB_BASE %>%
+  filter(observacion %in% c(NA))
+
+# obtenemos el valor de los componentes principales 
+CS_AB_v3K8[["graph_documents_TC"]][["labels"]][["y"]]
+CS_AB_v3K8[["graph_documents_TC"]][["labels"]][["x"]]
+
+chulls <- ddply(AB_BASE, .(color), function(AB_BASE) AB_BASE[chull(AB_BASE$Dim1, AB_BASE$Dim2), ])
+
+g1 <- ggplot(data = AB_BASE, aes(x = Dim1, y = Dim2)) +  
+  geom_point(aes(colour = factor(color)), size = 2) +
+  labs(x = "Dim 1 (22.65%)", y = "Dim 2 (13.81%)") + 
+  geom_polygon(data = chulls, aes(x = Dim1, y = Dim2, fill = color, group = color), alpha = 0.2) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none",
+        axis.line = element_line(lineend = "round")) +
+  geom_text_repel(data = AB_BASE, aes(x = Dim1, y = Dim2, label = ID, colour = color),
+                  size = 3, max.overlaps = Inf)
+
+g1
+
+ggsave("estructura_206_K10.pdf", plot = g1, width = 12, height = 10)
+
+#
+
+
+
 ####### Acoplamiento bibliografico #####
 
 # caragamos la base de datos en formato bib

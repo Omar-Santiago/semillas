@@ -3,7 +3,7 @@
     "path": "F:/Gih/semillas/scopus.R",
     "project_path": "scopus.R",
     "type": "r_source",
-    "hash": "3924594780",
+    "hash": "3370225593",
     "contents": "",
     "dirty": false,
     "created": 1742583858558.0,
@@ -13,15 +13,15 @@
         "tempName": "Untitled1",
         "source_window_id": "",
         "Source": "Source",
-        "cursorPosition": "292,0",
-        "scrollLine": "284"
+        "cursorPosition": "407,0",
+        "scrollLine": "395"
     },
-    "folds": "0|18|25|1|\n26|27|56|0|\n57|20|145|1|\n",
-    "lastKnownWriteTime": 1744220467,
+    "folds": "0|18|26|1|\n27|27|57|0|\n58|20|146|1|\n147|28|277|1|\n278|57|317|0|\n318|41|410|0|\n411|35|449|0|\n",
+    "lastKnownWriteTime": 1745297522,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1744220467832,
+    "last_content_update": 1745297549038,
     "read_only": false,
     "read_only_alternatives": []
 }

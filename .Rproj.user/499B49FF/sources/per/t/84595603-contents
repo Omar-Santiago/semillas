@@ -549,27 +549,55 @@ pheatmap(ibs_matirx,
 # creamos un archivo ped para el snmf
 # vcftools --vcf neutral_196ind.recode.vcf --plink --out neutral_196ind
 
-ped2geno("neutral_196ind.ped")
-ped_data <- read.table("neutral_196ind.ped", header = FALSE, sep = "/t")
-geno <- read.geno("neutral_196ind.geno") # esto lo hacemos para ver el orden de los individuos
+library(LEA) # para correr snmf
+
+ped2geno("GBS_196ind.ped")
+ped_data <- read.table("GBS_196ind.ped", header = FALSE, sep = "/t")
+geno <- read.geno("GBS_196ind.geno") # esto lo hacemos para ver el orden de los individuos
 
 # corremos un snmf con pocas iteraciones
-snmf_196 = snmf("neutral_196ind.geno", 
-                iterations=1000, K=1:10, rep=30, 
+snmf_196 = snmf("GBS_196ind.geno", 
+                iterations=1000, K=1:14, rep=30, 
                 entropy=T, CPU=4, ploidy=2, 
                 project="new")
+
 plot(snmf_196,lwd=8,col="#9215D0",pch=1, cex=2)
-snmf_ind_estructura = load.snmfProject("neutral_196ind.snmfProject")
-best=which.min(cross.entropy(snmf_ind_estructura, K=2))
+
+snmf_ind_estructura = load.snmfProject("GBS_196ind.snmfProject")
+
+best2=which.min(cross.entropy(snmf_ind_estructura, K=2))
+best4=which.min(cross.entropy(snmf_ind_estructura, K=4))
+best6=which.min(cross.entropy(snmf_ind_estructura, K=6))
+
 my.colors <- c("tomato", "lightblue",
                "olivedrab", "gold")
 
-barchart(snmf_ind_estructura, K = 2, run = best,
+barchart(snmf_ind_estructura, K = 2, run = best2,
          border = NA, space = 0,
          col = my.colors,
          xlab = "Individuos",
          ylab = "Proporciones ancestrales",
-         main = "Ancestria") -> bp
+         main = "Ancestria K2") -> bp
+axis(1, at = 1:length(bp$order),
+     labels = bp$order, las=1,
+     cex.axis = .4)
+
+barchart(snmf_ind_estructura, K = 4, run = best4,
+         border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuos",
+         ylab = "Proporciones ancestrales",
+         main = "Ancestria K4") -> bp
+axis(1, at = 1:length(bp$order),
+     labels = bp$order, las=1,
+     cex.axis = .4)
+
+barchart(snmf_ind_estructura, K = 6, run = best6,
+         border = NA, space = 0,
+         col = my.colors,
+         xlab = "Individuos",
+         ylab = "Proporciones ancestrales",
+         main = "Ancestria K6") -> bp
 axis(1, at = 1:length(bp$order),
      labels = bp$order, las=1,
      cex.axis = .4)
